@@ -1,0 +1,18 @@
+transformers
+torch
+accelerate
+
+# Debug
+pygments
+logzero
+
+# lsp stuff
+python-lsp-server
+rope
+
+nest_asyncio
+
+# python client for lsp
+pygls @ git+https://github.com/openlawlibrary/pygls.git
+
+pydantic
