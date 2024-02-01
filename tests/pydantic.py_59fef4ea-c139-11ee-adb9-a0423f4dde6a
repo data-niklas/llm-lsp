@@ -1,0 +1,70 @@
+from pydantic import BaseModel
+# Complete class User, create an instance and then convert to a dict
+
+class User(BaseModel):
+    name: str
+    age: int
+
+user = User(name="John", age=30)
+user_dict = user.json()
+print(user_dict)
+
+# Complete class Car, create an instance and then convert to a dict
+
+class Car(BaseModel):
+    make: str
+    model: str
+    year: int
+
+car = Car(make="Toyota", model="Camry", year=2020)
+car_dict = car.json()
+print(car_dict)
+
+# Complete class Address, create an instance and then convert to a dict
+
+class Address(BaseModel):
+    street: str
+    city: str
+    state: str
+    zip_code: str
+
+address = Address(street="123 Main St", city="Anytown", state="CA", zip_code="12345")
+address_dict = address.json()
+print(address_dict)
+
+# Complete class UserAddress, create an instance and then convert to a dict
+
+class UserAddress(BaseModel):
+    user: User
+    address: Address
+
+user_address = UserAddress(user=user, address=address)
+user_address_dict = user_address.json()
+print(user_address_dict)
+
+# Complete class CarAddress, create an instance and then convert to a dict
+
+class CarAddress(BaseModel):
+    car: Car
+    address: Address
+
+car_address = CarAddress(car=car, address=address)
+car_address_dict = car_address.json()
+print(car_address_dict)
+
+# Complete class UserCar, create an instance and then convert to a dict
+
+class UserCar(BaseModel):
+    user: User
+    car: Car
+
+user_car = UserCar(user=user, car=car)
+user_car_dict = user_car.json()
+print(user_car_dict)
+
+# Complete class UserCarAddress, create an instance and then convert to a dict
+
+class UserCarAddress(BaseModel):
+    user_car: UserCar
+    address: Address
+

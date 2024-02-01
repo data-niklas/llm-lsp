@@ -2,7 +2,7 @@ from llm_lsp.lsp_processor import LspLogitsProcessor
 from pygls.lsp.client import BaseLanguageClient
 import asyncio
 import argparse
-from transformers import AutoTokenizer, Pipeline
+from transformers import AutoTokenizer, Pipeline, LogitsProcessorList
 import transformers
 from pygments import highlight
 from pygments.formatters import Terminal256Formatter
@@ -27,9 +27,9 @@ MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 
 PROMPT_TEMPLATE = "You are a code completion tool. Complete the following Python tool. Only provide the completed code. Do not return descriptions of your actions. Do not generate more code than necessary."
 GLOBAL_CONFIGURATION = {
-    #"num_beam_groups": 2,
-    "num_beams": 2,
-    #"diversity_penalty": 1.0,
+    "num_beam_groups": 2,
+    "num_beams": 1,
+    "diversity_penalty": 1.0,
     "do_sample": True,
     "top_k": 50,
     "top_p": 0.95,
@@ -152,7 +152,7 @@ async def main(args):
     for sequences in pipeline(
         create_prompt(),
         eos_token_id=tokenizer.eos_token_id,
-        logits_processor=[processor],
+        logits_processor=LogitsProcessorList([processor]),
         **GLOBAL_CONFIGURATION,
     ):
         texts = [sequence["generated_text"] for sequence in sequences]
