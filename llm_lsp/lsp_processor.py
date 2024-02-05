@@ -9,72 +9,126 @@ import asyncio
 from os import path
 import os
 import uuid
+from functools import lru_cache
+import json
+# TODO: add special token
+# TODO: use special token as interrupt to provide more information to pipeline
+from llm_lsp.constants import DOCUMENTATION_INTERRUPT_TOKEN
+from llm_lsp.deprecation_messages import is_deprecated
+
+def custom_completion_item_hash(self):
+    return hash((self.label, self.kind))
+
+
+CompletionItem.__hash__ = custom_completion_item_hash
+
+
+class CompletionItemRanker:
+    def __init__(self, pipeline, tokenizer):
+        self.pipeline = pipeline
+        self.tokenizer = tokenizer
+        self.configuration = {
+            # "num_beam_groups": 0,
+            "num_beams": 2,
+            # "diversity_penalty": 1.0,
+            "do_sample": True,
+            "top_k": 50,
+            "top_p": 0.95,
+            "num_return_sequences": 1,
+            "return_full_text": False,
+            "temperature": 0.7,
+            "max_new_tokens": 2048,
+        }
+        self.cache = {}
+        self.categorize_prompt_template = "[INST] Categorize the goal and usage of the provided code piece. In addition to the code, you will receive the documentation and further details. Return the result as a JSON array of strings. Wrap strings in \". Do not return further comments, ONLY return the JSON array. Here is an example:\nCODE: 'to_dict(self)'\nDOCUMENTATION: 'Convert an instance of self to a Python dictionary'\nDETAILS: ''\nRESULT: [\"convert\", \"python\"]\n[/INST]\n"
+        self.rank_prompt_template = "[INST] You will be provided with code, a code snippet and the tags associated with the code snippet. Rank the relevance of the code piece to the previous code based on its tags. '1' is very relevant, whilst '0' is unrelevant. Return only the score as a literal. Do not return further comments.\n[/INST]\n"
+        # TODO: provide example in rank_prompt_template
+        # TODO: mention scores between 0 and 1
+
+    def summarize_completions(self, completions: List[CompletionItem]) -> List[str]:
+        """Returns a list of tags for the completion"""
+
+        def create_prompt():
+            for completion in completions:
+                yield self.categorize_prompt_template + f"CODE: '{completion.label}'\nDOCUMENTATION: '{completion.documentation.value}'\nDETAILS: '{completion.detail}'"
+
+        def get_tags(sequences, completion):
+            result_text = sequences[0]["generated_text"].strip()
+            if result_text.startswith("RESULT:"):
+                result_text = result_text[7:].strip()
+            if result_text.startswith("JSON ARRAY:"):
+                result_text = result_text[10:].strip()
+            try:
+                tags = list(set(json.loads(result_text)))
+                # logger.debug("TAGS: [" + ", ".join(tags) + "]")
+                return tags
+            except json.JSONDecodeError:
+                logger.error(result_text)
+                return [completion.insert_text]
+
+        return [
+            get_tags(result, completion)
+            for result, completion in zip(
+                self.pipeline(
+                    create_prompt(),
+                    use_cache=True,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    **self.configuration,
+                    pad_token_id=self.tokenizer.eos_token_id
+                ),
+                completions,
+            )
+        ]
+
+    def rank_completions(self, code, completions):
+        """Returns a list of tuples of completions with their score"""
+        completion_tags = self.summarize_completions(completions)
+
+        def create_prompt():
+            for tags, completion in zip(completion_tags, completions):
+                snippet = completion.label
+                tags = ", ".join(tags)
+                yield self.rank_prompt_template + f"CODE:\n```\n{code}\n```\nSNIPPET: '{snippet}'\nTAGS: '{tags}'"
+
+        def get_score(sequences, completion):
+            result_text = sequences[0]["generated_text"].strip()
+            if result_text.startswith("RESULT:"):
+                result_text = result_text[7:].strip()
+            if result_text.startswith("SCORE:"):
+                result_text = result_text[6:].strip()
+            try:
+                return float(result_text)
+            except ValueError:
+                logger.error("Could not parse: '" + result_text + "'")
+                return 0
+
+        return [
+            get_score(result, completion)
+            for result, completion in zip(
+                self.pipeline(
+                    create_prompt(),
+                    use_cache=True,
+                    eos_token_id=self.tokenizer.eos_token_id,
+                    **self.configuration,
+                    pad_token_id=self.tokenizer.eos_token_id
+                ),
+                completions,
+            )
+        ]
 
 
 class LspLogitsProcessor(LogitsProcessor):
-    def __init__(self, tokenizer, lsp_client, prompt_len, file, code):
+    def __init__(self, tokenizer, lsp_client, prompt_len, file, code, pipeline):
+        tokenizer.add_special_tokens({
+
+        })
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_client: BaseLanguageClient = lsp_client
         self.prompt_len = prompt_len
         self.file = file
         self.code = code
-
-    def char_line_of_code(self, code):
-        lines = code.splitlines()
-        last_line_index = len(lines) - 1
-        last_line = lines[last_line_index]
-        last_char_index = len(last_line)
-        return max(last_char_index, 0), max(last_line_index, 0)
-
-    def create_temp_file(self):
-        return self.file + "_" + str(uuid.uuid1())
-
-    def ask_completion(self, input_ids: LongTensor):
-        decoded_input = self.tokenizer.batch_decode(input_ids)[0]
-        code_with_completion = self.code + decoded_input[self.prompt_len :]
-        temp_file = self.create_temp_file()
-        with open(temp_file, "w") as f:
-            f.write(code_with_completion)
-        self.lsp_client.text_document_did_open(
-            DidOpenTextDocumentParams(
-                text_document=TextDocumentItem(
-                    uri="file://" + path.abspath(temp_file),
-                    language_id="python",
-                    version=1,
-                    text=code_with_completion,
-                )
-            )
-        )
-        char, line = self.char_line_of_code(code_with_completion)
-        awaitable = self.lsp_client.text_document_completion_async(
-            CompletionParams(
-                text_document=TextDocumentIdentifier(
-                    uri="file://" + path.abspath(temp_file)
-                ),
-                position=Position(character=char, line=line),
-                context=CompletionContext(
-                    trigger_kind=CompletionTriggerKind.Invoked, trigger_character="."
-                ),
-            )
-        )
-        items = asyncio.get_event_loop().run_until_complete(awaitable)
-        if isinstance(items, CompletionList):
-            items = items.items
-        items = [
-            asyncio.get_event_loop().run_until_complete(
-                self.lsp_client.completion_item_resolve_async(item)
-            )
-            for item in items
-        ]
-        return items, code_with_completion, temp_file
-
-    def clean(self, temp_file):
-        self.lsp_client.text_document_did_close(
-            DidCloseTextDocumentParams(
-                TextDocumentIdentifier(uri="file://" + path.abspath(temp_file))
-            )
-        )
-        os.remove(temp_file)
+        self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
+        self.interrupt_token_id = tokenizer.convert_tokens_to_ids(DOCUMENTATION_INTERRUPT_TOKEN)
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         return self.tokenizer.decode(input_ids)
@@ -111,10 +165,11 @@ class LspLogitsProcessor(LogitsProcessor):
             completion
             for completion in completions
             if not self.completion_text(completion).startswith("__")
+            or self.completion_text(completion) in ["__getitem__", "__setitem__"]
         ]
 
     def is_deprecated(self, completion) -> bool:
-        return "deprecated" in completion.documentation.value
+        return is_deprecated(completion.detail + "." + completion.insert_text)
 
     def split_deprecated_completions(self, completions):
         non_deprecated = []
@@ -143,16 +198,12 @@ class LspLogitsProcessor(LogitsProcessor):
         # Algorithm is not perfect, as .index returns the first match, but the token could occur twice
         try:
             input_ids_index = -2
-            # logger.debug(f"Searching for {input_ids[-1]} in {tokens}")
             last_input_id_index = tokens.index(input_ids[-1])
-            # logger.debug(tokens)
-            # logger.debug(input_ids[-5:])
             for i in reversed(range(last_input_id_index)):
                 if input_ids[input_ids_index] != tokens[i]:
                     return -1
                 input_ids_index -= 1
             text = self.tokenizer.decode(input_ids[-min(len(input_ids), 6) :])
-            logger.debug(f"An index of {last_input_id_index} has occured for '{text}'")
             return last_input_id_index
         except ValueError:
             return -1
@@ -163,6 +214,11 @@ class LspLogitsProcessor(LogitsProcessor):
         result_tokens = []
         for index, tokens in zip(indexes_after_overlap, tokens):
             if index >= len(tokens):
+                # For now just assume everything is a function
+                paren_open_id = self.tokenizer(
+                    self.tokenizer.decode(tokens) + "("
+                ).input_ids[-1]
+                result_tokens.append(paren_open_id)
                 continue
             result_tokens.append(tokens[index])
         return list(set(result_tokens))
@@ -191,10 +247,65 @@ class LspLogitsProcessor(LogitsProcessor):
             scores[token] = min(minimum - 7, scores[token].item())
         return scores
 
-    def downrank_completed_items(self, scores, non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens):
-        non_deprecated_unique_first_tokens = self.get_unique_first_tokens(non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens)
+    def downrank_completed_items(
+        self,
+        scores,
+        non_deprecated_index_after_last_overlapping_token,
+        non_deprecated_tokens,
+    ):
+        non_deprecated_unique_first_tokens = self.get_unique_first_tokens(
+            non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens
+        )
         for token in non_deprecated_unique_first_tokens:
             scores[token] -= 14
+        return scores
+
+    def apply_constant_adjustments(self, scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens):
+        for non_deprecated_token in non_deprecated_unique_first_tokens:
+            scores[non_deprecated_token] += 7.0
+        for deprecated_token in deprecated_unique_first_tokens:
+            scores[deprecated_token] -= 7.0 
+        return scores      
+
+    def filter_tokens_by_overlaps(
+        self, index_after_last_overlapping_token, tokens, completions
+    ):
+        # If there is at least one item with overlap, then the model is walking towards the overlap and all other items without overlap are irrelevant
+        if len(index_after_last_overlapping_token) == 0:
+            return index_after_last_overlapping_token, tokens, completions
+        largest_index = max(index_after_last_overlapping_token)
+        filtered_items = [
+            (index, tokens, completion)
+            for index, tokens, completion in zip(
+                index_after_last_overlapping_token, tokens, completions
+            )
+            if index == largest_index
+        ]
+        index_after_last_overlapping_token, tokens, completions = zip(*filtered_items)
+        return index_after_last_overlapping_token, tokens, completions
+
+    def uprank_divider_after_completion(self, scores, input_ids):
+        text = self.tokenizer.decode(input_ids[-1:])
+        open_token = self.tokenizer(text + "(").input_ids[-1]
+        scores[open_token] += 14
+        return scores
+
+    def check_deprecation_documentation_included(self, current_code: str, deprecated_completions):
+        if len(deprecated_completions) == 0:
+            return True
+        lines = current_code.splitlines()[:-1]
+        lines.reverse()
+        for line in lines:
+            line = line.strip()
+            if not line.startswith("# "):
+                return False
+            elif line.startswith("# Note: "):
+                return True
+        return False
+            
+    def interrupt(self, scores, data):
+        scores[self.interrupt_token_id] = 100
+        self.interrupt_data = data
         return scores
 
     def scores_for_batch(
@@ -215,6 +326,11 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
+            if not self.check_deprecation_documentation_included(current_code, deprecated_completions):
+                scores = self.interrupt(scores, deprecated_completions)
+                logger.debug("Interrupting code at: ")
+                logger.debug(current_code)
+                return scores
             non_deprecated_tokens, deprecated_tokens = self.tokenize_completions(
                 current_code, non_deprecated_completions
             ), self.tokenize_completions(current_code, deprecated_completions)
@@ -226,14 +342,16 @@ class LspLogitsProcessor(LogitsProcessor):
             ), self.index_of_last_matching_tokens(
                 input_ids, deprecated_tokens
             )
-            # TODO: determine if done
-            if self.count_full_match(
-                non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens
-            ) == 1:
-                # Just assuming that the deprecated items are irrelevant, as they should have been downranked quite heavily
-                logger.debug("Found a *single* full match so returning early")
-                # And now downrank items, as they should not occur, as the completion item has been fully used
-                return self.downrank_completed_items(scores, non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens)
+            # Only filter non deprecated, as deprecated should be downranked nonetheless
+            (
+                non_deprecated_index_after_last_overlapping_token,
+                non_deprecated_tokens,
+                non_deprecated_completions,
+            ) = self.filter_tokens_by_overlaps(
+                non_deprecated_index_after_last_overlapping_token,
+                non_deprecated_tokens,
+                non_deprecated_completions,
+            )
             (
                 non_deprecated_unique_first_tokens,
                 deprecated_unique_first_tokens,
@@ -242,16 +360,17 @@ class LspLogitsProcessor(LogitsProcessor):
             ), self.get_unique_first_tokens(
                 deprecated_index_after_last_overlapping_token, deprecated_tokens
             )
-            for non_deprecated_token in non_deprecated_unique_first_tokens:
-                scores[non_deprecated_token] += 7.0
-            for deprecated_token in deprecated_unique_first_tokens:
-                scores[deprecated_token] -= 7.0
+            #if len(non_deprecated_completions) > 0:
+            #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
+            #    logger.debug(list(zip(c_scores, [c.label for c in non_deprecated_completions])))
+            scores = self.apply_constant_adjustments(scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens)
             scores = self.ensure_deprecated_below_non_deprecated(
                 scores,
                 non_deprecated_unique_first_tokens,
                 deprecated_unique_first_tokens,
             )
         return scores
+
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
         """Returns a 2d FloatTensor which has scores for every batch"""

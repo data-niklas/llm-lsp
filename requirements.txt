@@ -8,7 +8,6 @@ logzero
 
 # lsp stuff
 python-lsp-server
-rope
 
 nest_asyncio
 
@@ -16,3 +15,5 @@ nest_asyncio
 pygls @ git+https://github.com/openlawlibrary/pygls.git
 
 pydantic
+tsv2py
+polars
