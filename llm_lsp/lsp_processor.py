@@ -1,5 +1,4 @@
 from transformers import LogitsProcessor, PreTrainedTokenizer
-
 from torch import LongTensor, FloatTensor, full_like, full
 import torch
 from pygls.lsp.client import BaseLanguageClient
@@ -13,7 +12,7 @@ from functools import lru_cache
 import json
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
-from llm_lsp.constants import DOCUMENTATION_INTERRUPT_TOKEN
+from llm_lsp.constants import DEPRECATION_INTERRUPT_TOKEN, SIGNATURE_INTERRUPT_TOKEN
 from llm_lsp.deprecation_messages import is_deprecated
 
 def custom_completion_item_hash(self):
@@ -128,7 +127,6 @@ class LspLogitsProcessor(LogitsProcessor):
         self.file = file
         self.code = code
         self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
-        self.interrupt_token_id = tokenizer.convert_tokens_to_ids(DOCUMENTATION_INTERRUPT_TOKEN)
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         return self.tokenizer.decode(input_ids)
@@ -299,12 +297,28 @@ class LspLogitsProcessor(LogitsProcessor):
             line = line.strip()
             if not line.startswith("# "):
                 return False
-            elif line.startswith("# Note: "):
+            elif line.startswith("# Deprecation note: "):
                 return True
         return False
+
+    def check_signature_documentation_included(self, current_code: str, signature_help):
+        if signature_help is None or len(signature_help.signatures) == 0:
+            return True
+        first_signature = signature_help.signatures[signature_help.active_signature].label
+        lines = current_code.splitlines()[:-1]
+        lines.reverse()
+        for line in lines:
+            line = line.strip()
+            if not line.startswith("# "):
+                return False
+            elif line.startswith("# Signature note: "):
+                return True
+        return False
+        
             
-    def interrupt(self, scores, data):
-        scores[self.interrupt_token_id] = 100
+    def interrupt(self, scores, data, i):
+        input_id = self.tokenizer.convert_tokens_to_ids(i)
+        scores[input_id] = 100
         self.interrupt_data = data
         return scores
 
@@ -317,6 +331,7 @@ class LspLogitsProcessor(LogitsProcessor):
         # logger.debug(current_code)
         with LspCodeFile(self.file, current_code, self.lsp_client) as lsp_code_file:
             resolved_completions = lsp_code_file.ask_completions()
+            signature_help = lsp_code_file.ask_signature()
             filtered_completions = self.filter_misc(
                 self.filter_completions_by_kind(
                     self.filter_builtin_completions(resolved_completions)
@@ -327,10 +342,16 @@ class LspLogitsProcessor(LogitsProcessor):
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
             if not self.check_deprecation_documentation_included(current_code, deprecated_completions):
-                scores = self.interrupt(scores, deprecated_completions)
+                scores = self.interrupt(scores, deprecated_completions, DEPRECATION_INTERRUPT_TOKEN)
                 logger.debug("Interrupting code at: ")
                 logger.debug(current_code)
                 return scores
+            if not self.check_signature_documentation_included(current_code, signature_help):
+                scores = self.interrupt(scores, signature_help, SIGNATURE_INTERRUPT_TOKEN)
+                logger.debug("Interrupting code at: ")
+                logger.debug(current_code)
+                return scores
+            # Downranking etc needed, else it won't choose the alternative
             non_deprecated_tokens, deprecated_tokens = self.tokenize_completions(
                 current_code, non_deprecated_completions
             ), self.tokenize_completions(current_code, deprecated_completions)
@@ -427,6 +448,16 @@ class LspCodeFile:
             for completion in completions
         ]
         return resolved_completions
+
+    def ask_signature(self):
+        char, line = self.char_line_of_code(self.code)
+        signature_awaitable = self.lsp_client.text_document_signature_help_async(SignatureHelpParams(
+            text_document=self.text_document_item,
+            position=Position(character=char, line=line),
+            context=None, 
+        ))
+        return asyncio.get_event_loop().run_until_complete(signature_awaitable)
+
 
     def char_line_of_code(self, code):
         lines = code.splitlines()
