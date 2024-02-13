@@ -18,7 +18,8 @@ from llm_lsp.lsp_client import LspClient
 from llm_lsp.constants import *
 from typing import Tuple
 import subprocess
-from llm_lsp.interrupts import InterruptStoppingCriteria, decode_tokens_with_maybe_interrupt, Interrupt, get_new_prompt_or_finish, handle_deprecation_interrupt, handle_signature_interrupt
+from llm_lsp.generator import LspGenerator
+from llm_lsp.interrupts import InterruptStoppingCriteria, Interrupt, handle_deprecation_interrupt, handle_signature_interrupt
 
 # https://github.com/swyddfa/lsp-devtools/blob/develop/lib/pytest-lsp/pytest_lsp/clients/visual_studio_code_v1.65.2.json
 
@@ -68,36 +69,7 @@ def initialize_generation(interrupts):
     add_special_tokens(pipeline, tokenizer, interrupt_token_ids)
     return pipeline, tokenizer
 
-
-def generate_code(pipeline, tokenizer, lsp, args, code, interrupts):
-    for interrupt in interrupts:
-        interrupt.input_id = tokenizer.convert_tokens_to_ids(interrupt.token)
-    interrupt_input_ids = [interrupt.input_id for interrupt in interrupts]
-    prompt = "[INST] " + PROMPT_TEMPLATE + "\n[/INST]\n" + code
-    text_len_prompt_with_initial_code = len(prompt)
-    processor = LspLogitsProcessor(tokenizer, lsp, len(prompt), args.file, code, pipeline)
-    while True:
-        sequences = pipeline(
-            prompt,
-            eos_token_id=tokenizer.eos_token_id,
-            logits_processor=LogitsProcessorList([processor]),
-            stopping_criteria=StoppingCriteriaList([InterruptStoppingCriteria(interrupt_input_ids)]),
-            return_tensors=True,
-            **GLOBAL_CONFIGURATION,
-        )
-        last = sequences[-1]
-        last_token_ids = last["generated_token_ids"]
-        finished, text = get_new_prompt_or_finish(tokenizer, interrupts, last_token_ids, text_len_prompt_with_initial_code, processor, code)
-        if finished:
-            return text
-        prompt = text
-
-async def main(args):
-    interrupts = [
-        Interrupt(token=DEPRECATION_INTERRUPT_TOKEN, callable=handle_deprecation_interrupt),
-        Interrupt(token=SIGNATURE_INTERRUPT_TOKEN, callable=handle_signature_interrupt)
-    ]
-    logger.setLevel(args.level)
+async def create_lsp(args):
     lsp_client = LspClient()
     await lsp_client.start("pylsp", [])
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
@@ -180,13 +152,22 @@ async def main(args):
             }
         )
     )
-    # from time import sleep
-    # sleep(15)  # Wait for initialization
+    return lsp
+
+async def main(args):
+    lsp = await create_lsp(args)
+    interrupts = [
+        Interrupt(token=DEPRECATION_INTERRUPT_TOKEN, callable=handle_deprecation_interrupt),
+        Interrupt(token=SIGNATURE_INTERRUPT_TOKEN, callable=handle_signature_interrupt)
+    ]
+    logger.setLevel(args.level)
     pipeline, tokenizer = initialize_generation(interrupts)
     code = ""
     with open(args.file, "r") as f:
         code = f.read()
-    code = generate_code(pipeline, tokenizer, lsp, args, code, interrupts)
+    generator = LspGenerator(pipeline, tokenizer, lsp, interrupts, LspLogitsProcessor)
+    code = generator(code, args.file)
+    #code = generate_code(pipeline, tokenizer, lsp, args, code, interrupts)
     hl = highlight_code(code)
     #hl = code + texts[0]
     logger.info("Code:\n##########\n" + hl + "\n##########")
