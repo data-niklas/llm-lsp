@@ -15,7 +15,8 @@ class LspGenerator:
         for interrupt in self.interrupts:
             interrupt.input_id = self.tokenizer.convert_tokens_to_ids(interrupt.token)
         interrupt_input_ids = [interrupt.input_id for interrupt in self.interrupts]
-        prompt = "[INST] " + PROMPT_TEMPLATE + "\n[/INST]\n" + code
+        # Last \n needed such that it will be cut off later by the +1
+        prompt = "[INST] " + PROMPT_TEMPLATE + "\n[/INST]\n" + code + "\n"
         text_len_prompt_with_initial_code = len(prompt)
         processor = self.logits_processor_cls(self.tokenizer, self.lsp, len(prompt), file, code, self.pipeline)
         while True:

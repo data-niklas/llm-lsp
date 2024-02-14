@@ -122,6 +122,7 @@ async def create_lsp(args):
                             tag_support=CompletionClientCapabilitiesCompletionItemTypeTagSupportType(
                                 value_set=[CompletionItemTag.Deprecated]
                             ),
+                            insert_replace_support=True
                         )
                     ),
                     publish_diagnostics=PublishDiagnosticsClientCapabilities(
@@ -179,8 +180,8 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file")
-    parser.add_argument("-d", "--directory")
+    parser.add_argument("-f", "--file", default="tests/tsv2py.py")
+    parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     return parser.parse_args()
 

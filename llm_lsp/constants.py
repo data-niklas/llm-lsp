@@ -1,9 +1,10 @@
 MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 
-PROMPT_TEMPLATE = "You are a code completion tool. Complete the following Python tool. Only provide the completed code. Do not return descriptions of your actions. Do not generate more code than necessary. Do not generate comments with further tasks. Do not generate excessive newlines."
+#PROMPT_TEMPLATE = "You are a code completion tool. Complete the provided Python code. Only generate the completed code. Do not return descriptions of your actions. Do not generate more code than necessary. DO NOT GENERATE COMMENTS UNDER ANY CIRCUMSTANCES!"
+PROMPT_TEMPLATE = "You are a code completion tool. Complete the following Python code. Only provide the completed code. Do not return descriptions of your actions. Do not generate more code than necessary. Do not generate comments with further tasks."
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 2,
+    "num_beams": 1,
     # "diversity_penalty": 1.0,
     "do_sample": False,
     #"top_k": 50,

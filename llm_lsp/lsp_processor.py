@@ -10,10 +10,13 @@ import os
 import uuid
 from functools import lru_cache
 import json
+import re
+
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.constants import DEPRECATION_INTERRUPT_TOKEN, SIGNATURE_INTERRUPT_TOKEN
 from llm_lsp.deprecation_messages import is_deprecated
+
 
 def custom_completion_item_hash(self):
     return hash((self.label, self.kind))
@@ -73,7 +76,7 @@ class CompletionItemRanker:
                     use_cache=True,
                     eos_token_id=self.tokenizer.eos_token_id,
                     **self.configuration,
-                    pad_token_id=self.tokenizer.eos_token_id
+                    pad_token_id=self.tokenizer.eos_token_id,
                 ),
                 completions,
             )
@@ -109,7 +112,7 @@ class CompletionItemRanker:
                     use_cache=True,
                     eos_token_id=self.tokenizer.eos_token_id,
                     **self.configuration,
-                    pad_token_id=self.tokenizer.eos_token_id
+                    pad_token_id=self.tokenizer.eos_token_id,
                 ),
                 completions,
             )
@@ -118,9 +121,7 @@ class CompletionItemRanker:
 
 class LspLogitsProcessor(LogitsProcessor):
     def __init__(self, tokenizer, lsp_client, prompt_len, file, code, pipeline):
-        tokenizer.add_special_tokens({
-
-        })
+        tokenizer.add_special_tokens({})
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_client: BaseLanguageClient = lsp_client
         self.prompt_len = prompt_len
@@ -135,7 +136,7 @@ class LspLogitsProcessor(LogitsProcessor):
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
         generated_code = generated_code_with_prompt[self.prompt_len :]
-        return self.code + generated_code
+        return self.code + "\n" + generated_code
 
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
@@ -148,14 +149,29 @@ class LspLogitsProcessor(LogitsProcessor):
             in [
                 CompletionItemKind.Method,
                 CompletionItemKind.Field,
+                CompletionItemKind.Class,
                 CompletionItemKind.Function,
                 CompletionItemKind.Property,
+                CompletionItemKind.Variable
             ]
         ]
 
     def filter_builtin_completions(self, completions):
         return [
             completion for completion in completions if completion.detail != "builtins"
+        ]
+
+    def filter_completions_by_case(self, code: str, completions):
+        """Remove already completed completions"""
+        # rsplit
+        trigger_phrase = re.search(r'[A-Za-z_]*$', code).group(0)
+        trigger_phrase_lower = trigger_phrase.lower()
+
+        return [
+            completion
+            for completion in completions
+            if not completion.insert_text.lower().startswith(trigger_phrase_lower)
+            or completion.insert_text.startswith(trigger_phrase)
         ]
 
     def filter_misc(self, completions):
@@ -258,12 +274,14 @@ class LspLogitsProcessor(LogitsProcessor):
             scores[token] -= 14
         return scores
 
-    def apply_constant_adjustments(self, scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens):
+    def apply_constant_adjustments(
+        self, scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens
+    ):
         for non_deprecated_token in non_deprecated_unique_first_tokens:
             scores[non_deprecated_token] += 7.0
         for deprecated_token in deprecated_unique_first_tokens:
-            scores[deprecated_token] -= 7.0 
-        return scores      
+            scores[deprecated_token] -= 7.0
+        return scores
 
     def filter_tokens_by_overlaps(
         self, index_after_last_overlapping_token, tokens, completions
@@ -288,7 +306,9 @@ class LspLogitsProcessor(LogitsProcessor):
         scores[open_token] += 14
         return scores
 
-    def check_deprecation_documentation_included(self, current_code: str, deprecated_completions):
+    def check_deprecation_documentation_included(
+        self, current_code: str, deprecated_completions
+    ):
         if len(deprecated_completions) == 0:
             return True
         lines = current_code.splitlines()[:-1]
@@ -304,7 +324,9 @@ class LspLogitsProcessor(LogitsProcessor):
     def check_signature_documentation_included(self, current_code: str, signature_help):
         if signature_help is None or len(signature_help.signatures) == 0:
             return True
-        first_signature = signature_help.signatures[signature_help.active_signature].label
+        first_signature = signature_help.signatures[
+            signature_help.active_signature
+        ].label
         lines = current_code.splitlines()[:-1]
         lines.reverse()
         for line in lines:
@@ -314,8 +336,14 @@ class LspLogitsProcessor(LogitsProcessor):
             elif line.startswith("# Signature note: "):
                 return True
         return False
-        
-            
+
+    def should_complete(self, code):
+        symbols = [")", "\n", " ", "\t", "]", "}"]
+        for symbol in symbols:
+            if code.endswith(symbol):
+                return False
+        return True
+
     def interrupt(self, scores, data, i):
         input_id = self.tokenizer.convert_tokens_to_ids(i)
         scores[input_id] = 100
@@ -330,24 +358,38 @@ class LspLogitsProcessor(LogitsProcessor):
         # logger.debug("CODE")
         # logger.debug(current_code)
         with LspCodeFile(self.file, current_code, self.lsp_client) as lsp_code_file:
-            resolved_completions = lsp_code_file.ask_completions()
+            if self.should_complete(current_code):
+                resolved_completions = lsp_code_file.ask_completions()
+            else:
+                resolved_completions = []
             signature_help = lsp_code_file.ask_signature()
             filtered_completions = self.filter_misc(
-                self.filter_completions_by_kind(
-                    self.filter_builtin_completions(resolved_completions)
+                self.filter_completions_by_case(
+                    current_code,
+                    self.filter_completions_by_kind(
+                        self.filter_builtin_completions(resolved_completions)
+                    ),
                 )
             )
             (
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            if not self.check_deprecation_documentation_included(current_code, deprecated_completions):
-                scores = self.interrupt(scores, deprecated_completions, DEPRECATION_INTERRUPT_TOKEN)
+            if not self.check_deprecation_documentation_included(
+                current_code, deprecated_completions
+            ):
+                scores = self.interrupt(
+                    scores, deprecated_completions, DEPRECATION_INTERRUPT_TOKEN
+                )
                 logger.debug("Interrupting code at: ")
                 logger.debug(current_code)
                 return scores
-            if not self.check_signature_documentation_included(current_code, signature_help):
-                scores = self.interrupt(scores, signature_help, SIGNATURE_INTERRUPT_TOKEN)
+            if not self.check_signature_documentation_included(
+                current_code, signature_help
+            ):
+                scores = self.interrupt(
+                    scores, signature_help, SIGNATURE_INTERRUPT_TOKEN
+                )
                 logger.debug("Interrupting code at: ")
                 logger.debug(current_code)
                 return scores
@@ -381,17 +423,20 @@ class LspLogitsProcessor(LogitsProcessor):
             ), self.get_unique_first_tokens(
                 deprecated_index_after_last_overlapping_token, deprecated_tokens
             )
-            #if len(non_deprecated_completions) > 0:
+            # if len(non_deprecated_completions) > 0:
             #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
             #    logger.debug(list(zip(c_scores, [c.label for c in non_deprecated_completions])))
-            scores = self.apply_constant_adjustments(scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens)
+            scores = self.apply_constant_adjustments(
+                scores,
+                non_deprecated_unique_first_tokens,
+                deprecated_unique_first_tokens,
+            )
             scores = self.ensure_deprecated_below_non_deprecated(
                 scores,
                 non_deprecated_unique_first_tokens,
                 deprecated_unique_first_tokens,
             )
         return scores
-
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
         """Returns a 2d FloatTensor which has scores for every batch"""
@@ -451,13 +496,14 @@ class LspCodeFile:
 
     def ask_signature(self):
         char, line = self.char_line_of_code(self.code)
-        signature_awaitable = self.lsp_client.text_document_signature_help_async(SignatureHelpParams(
-            text_document=self.text_document_item,
-            position=Position(character=char, line=line),
-            context=None, 
-        ))
+        signature_awaitable = self.lsp_client.text_document_signature_help_async(
+            SignatureHelpParams(
+                text_document=self.text_document_item,
+                position=Position(character=char, line=line),
+                context=None,
+            )
+        )
         return asyncio.get_event_loop().run_until_complete(signature_awaitable)
-
 
     def char_line_of_code(self, code):
         lines = code.splitlines()

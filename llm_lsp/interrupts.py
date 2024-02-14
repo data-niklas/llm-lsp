@@ -139,11 +139,13 @@ def get_new_prompt_or_finish(
     interrupt_id, text = decode_tokens_with_maybe_interrupt(
         tokenizer, interrupt_token_ids, last_token_ids
     )
+    # + 1 is for newline added in the prompt creation
     only_generated_code = text[text_len_prompt_with_initial_code:]
     if interrupt_id is None:
         only_generated_code = remove_notes(only_generated_code)
-        return True, code + only_generated_code
+        return True, code + "\n" + only_generated_code
     only_generated_code = remove_old_notes(only_generated_code)
+    logger.warn(only_generated_code)
     interrupt = [
         interrupt for interrupt in interrupts if interrupt.input_id == interrupt_id
     ][0]
