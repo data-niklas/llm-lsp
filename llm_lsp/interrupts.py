@@ -87,6 +87,8 @@ def add_signature_notes(signature_help, code):
 
 
 def decode_tokens_with_maybe_interrupt(tokenizer, interrupt_token_ids, tokens):
+    if tokens[-1] in interrupt_token_ids:
+        return tokens[-1], tokenizer.decode(tokens[:-1])
     # Remove eos token
     tokens = tokens[:-1]
     if tokens[-1] in interrupt_token_ids:
