@@ -96,18 +96,30 @@ def decode_tokens_with_maybe_interrupt(tokenizer, interrupt_token_ids, tokens):
     return None, tokenizer.decode(tokens)
 
 
-def handle_deprecation_interrupt(deprecated_items, only_generated_code, code):
-    generated_code_with_notes = add_deprecation_notes(
-        deprecated_items, only_generated_code
-    )
+def make_prompt(template, code, generated_code_with_notes):
     prompt = (
         "[INST] "
-        + PROMPT_TEMPLATE
+        + template
         + "\n[/INST]\n"
         + code
         + "\n"
         + generated_code_with_notes
     )
+    f"""{template}
+
+@@ Instruction
+{code}
+{generated_code_with_notes}
+
+@@ Response
+"""
+    return prompt
+
+def handle_deprecation_interrupt(deprecated_items, only_generated_code, code):
+    generated_code_with_notes = add_deprecation_notes(
+        deprecated_items, only_generated_code
+    )
+    prompt = make_prompt(PROMPT_TEMPLATE, code, generated_code_with_notes)
     logger.debug("New prompt is:")
     logger.debug(prompt)
     return prompt
@@ -115,14 +127,7 @@ def handle_deprecation_interrupt(deprecated_items, only_generated_code, code):
 
 def handle_signature_interrupt(signature_help, only_generated_code, code):
     generated_code_with_notes = add_signature_notes(signature_help, only_generated_code)
-    prompt = (
-        "[INST] "
-        + PROMPT_TEMPLATE
-        + "\n[/INST]\n"
-        + code
-        + "\n"
-        + generated_code_with_notes
-    )
+    prompt = make_prompt(PROMPT_TEMPLATE, code, generated_code_with_notes)
     logger.debug("New prompt is:")
     logger.debug(prompt)
     return prompt

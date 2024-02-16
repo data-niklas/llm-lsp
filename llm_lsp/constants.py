@@ -1,4 +1,5 @@
 MODEL = "codellama/CodeLlama-7b-Instruct-hf"
+#MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
 
 #PROMPT_TEMPLATE = "You are a code completion tool. Complete the provided Python code. Only generate the completed code. Do not return descriptions of your actions. Do not generate more code than necessary. DO NOT GENERATE COMMENTS UNDER ANY CIRCUMSTANCES!"
 PROMPT_TEMPLATE = "You are a code completion tool. Complete the following Python code. Only provide the completed code. Do not return descriptions of your actions. Do not generate more code than necessary. Do not generate comments with further tasks."

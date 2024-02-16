@@ -119,7 +119,12 @@ class CompletionItemRanker:
         ]
 
 
+# TODO Chat templates
+
+
 class LspLogitsProcessor(LogitsProcessor):
+    # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
+    # This should stop Parser(fields=Parser)
     def __init__(self, tokenizer, lsp_client, prompt_len, file, code, pipeline):
         tokenizer.add_special_tokens({})
         self.tokenizer: PreTrainedTokenizer = tokenizer
@@ -152,7 +157,7 @@ class LspLogitsProcessor(LogitsProcessor):
                 CompletionItemKind.Class,
                 CompletionItemKind.Function,
                 CompletionItemKind.Property,
-                CompletionItemKind.Variable
+                CompletionItemKind.Variable,
             ]
         ]
 
@@ -164,7 +169,7 @@ class LspLogitsProcessor(LogitsProcessor):
     def filter_completions_by_case(self, code: str, completions):
         """Remove already completed completions"""
         # rsplit
-        trigger_phrase = re.search(r'[A-Za-z_]*$', code).group(0)
+        trigger_phrase = re.search(r"[A-Za-z_]*$", code).group(0)
         trigger_phrase_lower = trigger_phrase.lower()
 
         return [
@@ -212,6 +217,7 @@ class LspLogitsProcessor(LogitsProcessor):
         # Algorithm is not perfect, as .index returns the first match, but the token could occur twice
         try:
             input_ids_index = -2
+            ids = input_ids.tolist()
             last_input_id_index = tokens.index(input_ids[-1])
             for i in reversed(range(last_input_id_index)):
                 if input_ids[input_ids_index] != tokens[i]:
@@ -219,7 +225,7 @@ class LspLogitsProcessor(LogitsProcessor):
                 input_ids_index -= 1
             text = self.tokenizer.decode(input_ids[-min(len(input_ids), 6) :])
             return last_input_id_index
-        except ValueError:
+        except ValueError as e:
             return -1
         except IndexError:
             return -1
@@ -282,6 +288,20 @@ class LspLogitsProcessor(LogitsProcessor):
         for deprecated_token in deprecated_unique_first_tokens:
             scores[deprecated_token] -= 7.0
         return scores
+
+    def filter_completions_by_postfix(self, trigger_phrase: str, completions):
+        return [
+            completion
+            for completion in completions
+            if completion.kind in [
+                CompletionItemKind.Method,
+                CompletionItemKind.Field,
+                CompletionItemKind.Function,
+                CompletionItemKind.Property,
+                CompletionItemKind.TypeParameter
+            ]
+            or (completion.insert_text.startswith(trigger_phrase) and trigger_phrase != "")
+        ]
 
     def filter_tokens_by_overlaps(
         self, index_after_last_overlapping_token, tokens, completions
@@ -362,12 +382,16 @@ class LspLogitsProcessor(LogitsProcessor):
                 resolved_completions = lsp_code_file.ask_completions()
             else:
                 resolved_completions = []
+            trigger_phrase = re.search(r"[A-Za-z_]*$", code).group(0)
             signature_help = lsp_code_file.ask_signature()
             filtered_completions = self.filter_misc(
-                self.filter_completions_by_case(
-                    current_code,
-                    self.filter_completions_by_kind(
-                        self.filter_builtin_completions(resolved_completions)
+                self.filter_completions_by_postfix(
+                    trigger_phrase,
+                    self.filter_completions_by_case(
+                        current_code,
+                        self.filter_completions_by_kind(
+                            self.filter_builtin_completions(resolved_completions)
+                        ),
                     ),
                 )
             )

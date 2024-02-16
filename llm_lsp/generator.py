@@ -1,5 +1,5 @@
 from llm_lsp.constants import *
-from llm_lsp.interrupts import get_new_prompt_or_finish, InterruptStoppingCriteria
+from llm_lsp.interrupts import get_new_prompt_or_finish, InterruptStoppingCriteria, make_prompt
 from transformers import AutoTokenizer, Pipeline, LogitsProcessorList, StoppingCriteriaList, StoppingCriteria
 
 
@@ -16,7 +16,7 @@ class LspGenerator:
             interrupt.input_id = self.tokenizer.convert_tokens_to_ids(interrupt.token)
         interrupt_input_ids = [interrupt.input_id for interrupt in self.interrupts]
         # Last \n needed such that it will be cut off later by the +1
-        prompt = "[INST] " + PROMPT_TEMPLATE + "\n[/INST]\n" + code + "\n"
+        prompt = make_prompt(PROMPT_TEMPLATE, code, "")
         text_len_prompt_with_initial_code = len(prompt)
         processor = self.logits_processor_cls(self.tokenizer, self.lsp, len(prompt), file, code, self.pipeline)
         while True:
