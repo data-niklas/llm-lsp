@@ -166,10 +166,9 @@ class LspLogitsProcessor(LogitsProcessor):
             completion for completion in completions if completion.detail != "builtins"
         ]
 
-    def filter_completions_by_case(self, code: str, completions):
+    def filter_completions_by_case(self, trigger_phrase: str, completions):
         """Remove already completed completions"""
         # rsplit
-        trigger_phrase = re.search(r"[A-Za-z_]*$", code).group(0)
         trigger_phrase_lower = trigger_phrase.lower()
 
         return [
@@ -200,48 +199,23 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated.append(completion)
         return non_deprecated, deprecated
 
-    def tokenize_completion(self, code_token_len, code: str, completion):
-        completion_text = self.completion_text(completion)
+    @lru_cache
+    def tokenize_overlap(self, code_token_len, code: str, overlap):
         return self.tokenizer(
-            code + completion_text, add_special_tokens=False
+            code +
+            overlap, add_special_tokens=False
         ).input_ids[code_token_len:]
 
-    def tokenize_completions(self, code: str, completions):
+
+    def overlap_unique_first_tokens(self, code: str, overlaps):
+        # Assume that by concatenating the chosen tokens do not change
         code_token_len = len(self.tokenizer(code, add_special_tokens=False).input_ids)
-        return [
-            self.tokenize_completion(code_token_len, code, completion)
-            for completion in completions
-        ]
+        return list(set([
+            self.tokenize_overlap(code_token_len, code, overlap)[0]
+            for overlap in overlaps
+            if len(self.tokenize_overlap(code_token_len, code, overlap)) > 0
+        ]))
 
-    def index_of_last_matching_token(self, input_ids, tokens) -> int:
-        # Algorithm is not perfect, as .index returns the first match, but the token could occur twice
-        try:
-            input_ids_index = -2
-            ids = input_ids.tolist()
-            last_input_id_index = tokens.index(input_ids[-1])
-            for i in reversed(range(last_input_id_index)):
-                if input_ids[input_ids_index] != tokens[i]:
-                    return -1
-                input_ids_index -= 1
-            text = self.tokenizer.decode(input_ids[-min(len(input_ids), 6) :])
-            return last_input_id_index
-        except ValueError as e:
-            return -1
-        except IndexError:
-            return -1
-
-    def get_unique_first_tokens(self, indexes_after_overlap, tokens):
-        result_tokens = []
-        for index, tokens in zip(indexes_after_overlap, tokens):
-            if index >= len(tokens):
-                # For now just assume everything is a function
-                paren_open_id = self.tokenizer(
-                    self.tokenizer.decode(tokens) + "("
-                ).input_ids[-1]
-                result_tokens.append(paren_open_id)
-                continue
-            result_tokens.append(tokens[index])
-        return list(set(result_tokens))
 
     def count_full_match(self, indexes_after_overlap, tokens):
         return sum(
@@ -251,11 +225,6 @@ class LspLogitsProcessor(LogitsProcessor):
             ]
         )
 
-    def index_of_last_matching_tokens(self, input_ids, tokens):
-        return [
-            self.index_of_last_matching_token(input_ids, completion_tokens) + 1
-            for completion_tokens in tokens
-        ]
 
     def ensure_deprecated_below_non_deprecated(
         self, scores, non_deprecated, deprecated
@@ -293,32 +262,19 @@ class LspLogitsProcessor(LogitsProcessor):
         return [
             completion
             for completion in completions
-            if completion.kind in [
+            if completion.kind
+            in [
                 CompletionItemKind.Method,
                 CompletionItemKind.Field,
                 CompletionItemKind.Function,
                 CompletionItemKind.Property,
-                CompletionItemKind.TypeParameter
+                CompletionItemKind.TypeParameter,
             ]
-            or (completion.insert_text.startswith(trigger_phrase) and trigger_phrase != "")
-        ]
-
-    def filter_tokens_by_overlaps(
-        self, index_after_last_overlapping_token, tokens, completions
-    ):
-        # If there is at least one item with overlap, then the model is walking towards the overlap and all other items without overlap are irrelevant
-        if len(index_after_last_overlapping_token) == 0:
-            return index_after_last_overlapping_token, tokens, completions
-        largest_index = max(index_after_last_overlapping_token)
-        filtered_items = [
-            (index, tokens, completion)
-            for index, tokens, completion in zip(
-                index_after_last_overlapping_token, tokens, completions
+            or (
+                completion.insert_text.startswith(trigger_phrase)
+                and trigger_phrase != ""
             )
-            if index == largest_index
         ]
-        index_after_last_overlapping_token, tokens, completions = zip(*filtered_items)
-        return index_after_last_overlapping_token, tokens, completions
 
     def uprank_divider_after_completion(self, scores, input_ids):
         text = self.tokenizer.decode(input_ids[-1:])
@@ -370,6 +326,18 @@ class LspLogitsProcessor(LogitsProcessor):
         self.interrupt_data = data
         return scores
 
+    def get_completion_text(self, completion):
+        text = self.completion_text(completion)
+        if completion.kind in [CompletionItemKind.Method, CompletionItemKind.Class]:
+            text += "("
+        return text
+
+    def get_completions_text(self, completions):
+        return [self.get_completion_text(completion) for completion in completions]
+
+    def get_completions_overlap(self, completions: List[str], trigger_phrase: str):
+        return [completion.replace(trigger_phrase, "", 1) for completion in completions]
+
     def scores_for_batch(
         self, input_ids: LongTensor, scores: FloatTensor
     ) -> FloatTensor:
@@ -382,13 +350,13 @@ class LspLogitsProcessor(LogitsProcessor):
                 resolved_completions = lsp_code_file.ask_completions()
             else:
                 resolved_completions = []
-            trigger_phrase = re.search(r"[A-Za-z_]*$", code).group(0)
+            trigger_phrase = re.search(r"[A-Za-z_]*$", current_code).group(0)
             signature_help = lsp_code_file.ask_signature()
             filtered_completions = self.filter_misc(
                 self.filter_completions_by_postfix(
                     trigger_phrase,
                     self.filter_completions_by_case(
-                        current_code,
+                        trigger_phrase,
                         self.filter_completions_by_kind(
                             self.filter_builtin_completions(resolved_completions)
                         ),
@@ -416,49 +384,37 @@ class LspLogitsProcessor(LogitsProcessor):
                 )
                 logger.debug("Interrupting code at: ")
                 logger.debug(current_code)
+                # TODO: do not interrupt on stdlib stuff
                 return scores
-            # Downranking etc needed, else it won't choose the alternative
-            non_deprecated_tokens, deprecated_tokens = self.tokenize_completions(
-                current_code, non_deprecated_completions
-            ), self.tokenize_completions(current_code, deprecated_completions)
-            (
-                non_deprecated_index_after_last_overlapping_token,
-                deprecated_index_after_last_overlapping_token,
-            ) = self.index_of_last_matching_tokens(
-                input_ids, non_deprecated_tokens
-            ), self.index_of_last_matching_tokens(
-                input_ids, deprecated_tokens
+
+            # get completion text for each completion, which may add characters such as ( to functions and , to variables
+            # for each completion text, compare to trigger_phrase and get the next few characters
+            # add the characters to the current_code to get the next tokens
+            (non_deprecated_completion_texts, deprecated_completion_texts) = (
+                self.get_completions_text(non_deprecated_completions),
+                self.get_completions_text(deprecated_completions),
             )
-            # Only filter non deprecated, as deprecated should be downranked nonetheless
-            (
-                non_deprecated_index_after_last_overlapping_token,
-                non_deprecated_tokens,
-                non_deprecated_completions,
-            ) = self.filter_tokens_by_overlaps(
-                non_deprecated_index_after_last_overlapping_token,
-                non_deprecated_tokens,
-                non_deprecated_completions,
+            (non_deprecated_completion_overlap, deprecated_completion_overlap) = (
+                self.get_completions_overlap(non_deprecated_completion_texts, trigger_phrase),
+                self.get_completions_overlap(deprecated_completion_texts, trigger_phrase),
             )
-            (
-                non_deprecated_unique_first_tokens,
-                deprecated_unique_first_tokens,
-            ) = self.get_unique_first_tokens(
-                non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens
-            ), self.get_unique_first_tokens(
-                deprecated_index_after_last_overlapping_token, deprecated_tokens
+
+            (non_deprecated_first_tokens, deprecated_first_tokens) = (
+                self.overlap_unique_first_tokens(current_code, non_deprecated_completion_overlap),
+                self.overlap_unique_first_tokens(current_code, deprecated_completion_overlap)
             )
             # if len(non_deprecated_completions) > 0:
             #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
             #    logger.debug(list(zip(c_scores, [c.label for c in non_deprecated_completions])))
             scores = self.apply_constant_adjustments(
                 scores,
-                non_deprecated_unique_first_tokens,
-                deprecated_unique_first_tokens,
+                non_deprecated_first_tokens,
+                deprecated_first_tokens,
             )
             scores = self.ensure_deprecated_below_non_deprecated(
                 scores,
-                non_deprecated_unique_first_tokens,
-                deprecated_unique_first_tokens,
+                non_deprecated_first_tokens,
+                deprecated_first_tokens,
             )
         return scores
 
