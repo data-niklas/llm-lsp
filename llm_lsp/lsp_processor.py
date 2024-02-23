@@ -125,11 +125,11 @@ class CompletionItemRanker:
 class LspLogitsProcessor(LogitsProcessor):
     # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
     # This should stop Parser(fields=Parser)
-    def __init__(self, tokenizer, lsp_client, prompt_len, file, code, pipeline):
+    def __init__(self, tokenizer, lsp_client, prompt_util, file, code, pipeline):
         tokenizer.add_special_tokens({})
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_client: BaseLanguageClient = lsp_client
-        self.prompt_len = prompt_len
+        self.prompt_util = prompt_util
         self.file = file
         self.code = code
         self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
@@ -140,8 +140,8 @@ class LspLogitsProcessor(LogitsProcessor):
     def current_code(self, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
-        generated_code = generated_code_with_prompt[self.prompt_len :]
-        return self.code + "\n" + generated_code
+        generated_code = self.prompt_util.get_generated_code(generated_code_with_prompt)
+        return self.prompt_util.code + generated_code
 
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
@@ -287,31 +287,34 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         if len(deprecated_completions) == 0:
             return True
-        lines = current_code.splitlines()[:-1]
-        lines.reverse()
-        for line in lines:
-            line = line.strip()
-            if not line.startswith("# "):
-                return False
-            elif line.startswith("# Deprecation note: "):
-                return True
-        return False
+        return "# Deprecation note: " in current_code
+        # lines = current_code.splitlines()[:-1]
+        # lines.reverse()
+        # for line in lines:
+        #     line = line.strip()
+        #     if not line.startswith("# "):
+        #         return False
+        #     elif line.startswith("# Deprecation note: "):
+        #         return True
+        # return False
 
     def check_signature_documentation_included(self, current_code: str, signature_help):
         if signature_help is None or len(signature_help.signatures) == 0:
             return True
+        current_code = current_code.rstrip(" \t\n")
         first_signature = signature_help.signatures[
             signature_help.active_signature
         ].label
-        lines = current_code.splitlines()[:-1]
-        lines.reverse()
-        for line in lines:
-            line = line.strip()
-            if not line.startswith("# "):
-                return False
-            elif line.startswith("# Signature note: "):
-                return True
-        return False
+        return "# Signature note: " in current_code
+        # lines = current_code.splitlines()[:-1]
+        # lines.reverse()
+        # for line in lines:
+        #     line = line.strip()
+        #     if not line.startswith("# "):
+        #         return False
+        #     elif line.startswith("# Signature note: "):
+        #         return True
+        # return False
 
     def should_complete(self, code):
         symbols = [")", "\n", " ", "\t", "]", "}"]
@@ -332,6 +335,11 @@ class LspLogitsProcessor(LogitsProcessor):
             text += "("
         return text
 
+    def downrank_comments(self, current_code, scores):
+        hashtag_id = self.tokenizer(current_code + "#").input_ids[-1]
+        scores[hashtag_id] -= 100
+        return scores
+
     def get_completions_text(self, completions):
         return [self.get_completion_text(completion) for completion in completions]
 
@@ -343,8 +351,6 @@ class LspLogitsProcessor(LogitsProcessor):
     ) -> FloatTensor:
         """Returns a 1d FloatTensor for a single batch"""
         current_code = self.current_code(input_ids)
-        # logger.debug("CODE")
-        # logger.debug(current_code)
         with LspCodeFile(self.file, current_code, self.lsp_client) as lsp_code_file:
             if self.should_complete(current_code):
                 resolved_completions = lsp_code_file.ask_completions()
@@ -373,8 +379,6 @@ class LspLogitsProcessor(LogitsProcessor):
                 scores = self.interrupt(
                     scores, deprecated_completions, DEPRECATION_INTERRUPT_TOKEN
                 )
-                logger.debug("Interrupting code at: ")
-                logger.debug(current_code)
                 return scores
             if not self.check_signature_documentation_included(
                 current_code, signature_help
@@ -382,8 +386,6 @@ class LspLogitsProcessor(LogitsProcessor):
                 scores = self.interrupt(
                     scores, signature_help, SIGNATURE_INTERRUPT_TOKEN
                 )
-                logger.debug("Interrupting code at: ")
-                logger.debug(current_code)
                 # TODO: do not interrupt on stdlib stuff
                 return scores
 
@@ -406,6 +408,7 @@ class LspLogitsProcessor(LogitsProcessor):
             # if len(non_deprecated_completions) > 0:
             #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
             #    logger.debug(list(zip(c_scores, [c.label for c in non_deprecated_completions])))
+            scores = self.downrank_comments(current_code, scores)
             scores = self.apply_constant_adjustments(
                 scores,
                 non_deprecated_first_tokens,

@@ -20,7 +20,7 @@ from typing import Tuple
 import subprocess
 from llm_lsp.generator import LspGenerator
 from llm_lsp.interrupts import InterruptStoppingCriteria, Interrupt, handle_deprecation_interrupt, handle_signature_interrupt
-
+from llm_lsp.prompt import Prompt
 # https://github.com/swyddfa/lsp-devtools/blob/develop/lib/pytest-lsp/pytest_lsp/clients/visual_studio_code_v1.65.2.json
 
 import nest_asyncio
@@ -69,7 +69,7 @@ def initialize_generation(interrupts):
     add_special_tokens(pipeline, tokenizer, interrupt_token_ids)
     return pipeline, tokenizer
 
-async def create_lsp(args):
+async def create_lsp(directory):
     lsp_client = LspClient()
     await lsp_client.start("pylsp", [])
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
@@ -94,7 +94,7 @@ async def create_lsp(args):
 
     initialize_result = await lsp.initialize_async(
         InitializeParams(
-            root_path=args.directory,
+            root_path=directory,
             capabilities=ClientCapabilities(
                 workspace=WorkspaceClientCapabilities(
                     configuration=True,
@@ -139,13 +139,13 @@ async def create_lsp(args):
     lsp.initialized(InitializedParams())
     logger.info(
         f"Using python: "
-        + path.abspath(path.join(find_venv(args.directory), "bin", "python"))
+        + path.abspath(path.join(find_venv(directory), "bin", "python"))
     )
     lsp.workspace_did_change_configuration(
         DidChangeConfigurationParams(
             settings={
                 "pylsp.plugins.jedi.environment": path.abspath(
-                    path.join(find_venv(args.directory), "bin", "python")
+                    path.join(find_venv(directory), "bin", "python")
                 ),
                 "pylsp.plugins.jedi_completion.include_class_objects": True,
                 "pylsp.plugins.jedi_completion.include_function_objects": True,
@@ -156,7 +156,7 @@ async def create_lsp(args):
     return lsp
 
 async def main(args):
-    lsp = await create_lsp(args)
+    lsp = await create_lsp(args.directory)
     interrupts = [
         Interrupt(token=DEPRECATION_INTERRUPT_TOKEN, callable=handle_deprecation_interrupt),
         Interrupt(token=SIGNATURE_INTERRUPT_TOKEN, callable=handle_signature_interrupt)
@@ -180,7 +180,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/tsv2py.py")
+    parser.add_argument("-f", "--file", default="tests/pydantic.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     return parser.parse_args()

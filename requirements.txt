@@ -17,3 +17,5 @@ pygls @ git+https://github.com/openlawlibrary/pygls.git
 pydantic
 tsv2py
 polars
+
+evalplus
