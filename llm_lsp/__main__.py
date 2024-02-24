@@ -21,6 +21,8 @@ import subprocess
 from llm_lsp.generator import LspGenerator
 from llm_lsp.interrupts import InterruptStoppingCriteria, Interrupt, handle_deprecation_interrupt, handle_signature_interrupt
 from llm_lsp.prompt import Prompt
+from llm_lsp.strategy import GenerationStrategy
+
 # https://github.com/swyddfa/lsp-devtools/blob/develop/lib/pytest-lsp/pytest_lsp/clients/visual_studio_code_v1.65.2.json
 
 import nest_asyncio
@@ -166,7 +168,8 @@ async def main(args):
     code = ""
     with open(args.file, "r") as f:
         code = f.read()
-    generator = LspGenerator(pipeline, tokenizer, lsp, interrupts, LspLogitsProcessor)
+    strategy = args.strategy
+    generator = LspGenerator(pipeline, tokenizer, lsp, interrupts, LspLogitsProcessor, strategy)
     code = generator(code, args.file)
     #code = generate_code(pipeline, tokenizer, lsp, args, code, interrupts)
     hl = highlight_code(code)
@@ -180,9 +183,10 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/pydantic.py")
+    parser.add_argument("-f", "--file", default="tests/generate_pydantic.md")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
+    parser.add_argument("-s", "--strategy", default="GENERATE")
     return parser.parse_args()
 
 

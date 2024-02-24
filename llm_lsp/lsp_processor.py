@@ -16,6 +16,7 @@ import re
 # TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.constants import DEPRECATION_INTERRUPT_TOKEN, SIGNATURE_INTERRUPT_TOKEN
 from llm_lsp.deprecation_messages import is_deprecated
+from llm_lsp.strategy import GenerationStrategy
 
 
 def custom_completion_item_hash(self):
@@ -125,14 +126,14 @@ class CompletionItemRanker:
 class LspLogitsProcessor(LogitsProcessor):
     # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
     # This should stop Parser(fields=Parser)
-    def __init__(self, tokenizer, lsp_client, prompt_util, file, code, pipeline):
+    def __init__(self, tokenizer, lsp_client, prompt_util, pipeline, strategy, file):
         tokenizer.add_special_tokens({})
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_client: BaseLanguageClient = lsp_client
         self.prompt_util = prompt_util
-        self.file = file
-        self.code = code
+        self.strategy = strategy
         self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
+        self.file = file
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         return self.tokenizer.decode(input_ids)
@@ -141,7 +142,10 @@ class LspLogitsProcessor(LogitsProcessor):
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
         generated_code = self.prompt_util.get_generated_code(generated_code_with_prompt)
-        return self.prompt_util.code + generated_code
+        if self.strategy == GenerationStrategy.COMPLETE:
+            return self.prompt_util.code + generated_code
+        elif self.strategy == GenerationStrategy.GENERATE:
+            return generated_code
 
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
@@ -351,7 +355,11 @@ class LspLogitsProcessor(LogitsProcessor):
     ) -> FloatTensor:
         """Returns a 1d FloatTensor for a single batch"""
         current_code = self.current_code(input_ids)
-        with LspCodeFile(self.file, current_code, self.lsp_client) as lsp_code_file:
+        if self.strategy == GenerationStrategy.COMPLETE:
+            filename = self.file
+        else:
+            filename = "__generate__.py"
+        with LspCodeFile(filename, current_code, self.lsp_client) as lsp_code_file:
             if self.should_complete(current_code):
                 resolved_completions = lsp_code_file.ask_completions()
             else:
@@ -489,6 +497,8 @@ class LspCodeFile:
         return asyncio.get_event_loop().run_until_complete(signature_awaitable)
 
     def char_line_of_code(self, code):
+        if code == "":
+            return 0, 0
         lines = code.splitlines()
         last_line_index = len(lines) - 1
         last_line = lines[last_line_index]

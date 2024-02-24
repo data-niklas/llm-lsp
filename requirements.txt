@@ -2,6 +2,8 @@ transformers
 torch
 accelerate
 
+sentencepiece
+
 # Debug
 pygments
 logzero

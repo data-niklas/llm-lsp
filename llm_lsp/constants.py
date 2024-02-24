@@ -1,6 +1,5 @@
-#MODEL = "codellama/CodeLlama-7b-Instruct-hf"
-MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
-MODEL = "sahil2801/instruct-codegen-16B"
+MODEL = "codellama/CodeLlama-7b-Instruct-hf"
+#MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
 
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {

@@ -5,6 +5,7 @@ from logzero import logger
 import re
 from llm_lsp.deprecation_messages import get_deprecation_message
 from llm_lsp.constants import *
+from llm_lsp.strategy import GenerationStrategy
 
 
 class InterruptStoppingCriteria(StoppingCriteria):
@@ -99,47 +100,24 @@ def decode_tokens_with_maybe_interrupt(tokenizer, interrupt_token_ids, tokens):
         return tokens[-1], tokenizer.decode(tokens[:-1])
     return None, tokenizer.decode(tokens)
 
-def make_prompt(code):
-    return [
-        {"role": "system", "content": "You are an expert programmer. Follow the instructions in the code comments for additional instructions no how to complete the code. Return only the completion."},
-        {"role": "user", "content": f"Complete the provided Python code. Return only the completion:\n```py\n{code}\n```"}
-    ]
 
-# def make_prompt(template, code, generated_code_with_notes):
-#     prompt = (
-#         "[INST] "
-#         + template
-#         + "\n[/INST]\n"
-#         + code
-#         + "\n"
-#         + generated_code_with_notes
-#     )
-#     f"""{template}
 
-# @@ Instruction
-# {code}
-# {generated_code_with_notes}
-
-# @@ Response
-# """
-#     return prompt
-
-def handle_deprecation_interrupt(deprecated_items, only_generated_code, code, prompt_util):
+def handle_deprecation_interrupt(deprecated_items, only_generated_code, code, prompt_util, strategy):
     generated_code_with_notes = add_deprecation_notes(
         deprecated_items, only_generated_code
     )
     # TODO: no \n if inline completion
-    prompt = prompt_util.format(code, generated_code_with_notes)
+    prompt = prompt_util.format(code, generated_code_with_notes, strategy)
     #logger.debug("New prompt is:")
     #logger.debug(prompt)
     return prompt
 
 
-def handle_signature_interrupt(signature_help, only_generated_code, code, prompt_util):
+def handle_signature_interrupt(signature_help, only_generated_code, code, prompt_util, strategy):
     generated_code_with_notes = add_signature_notes(signature_help, only_generated_code)
     # TODO: no \n if inline completion
     
-    prompt = prompt_util.format(code, generated_code_with_notes)
+    prompt = prompt_util.format(code, generated_code_with_notes, strategy)
     return prompt
 
 
@@ -150,6 +128,7 @@ def get_new_prompt_or_finish(
     prompt_util,
     processor,
     code,
+    strategy
 ):
     """Returns if it is finished and the text (either finished text or new prompt)"""
     interrupt_token_ids = [interrupt.input_id for interrupt in interrupts]
@@ -160,13 +139,16 @@ def get_new_prompt_or_finish(
     only_generated_code = prompt_util.get_generated_code(text)
     if interrupt_id is None:
         only_generated_code = remove_notes(only_generated_code)
-        return True, code + "\n" + only_generated_code
+        if strategy == GenerationStrategy.COMPLETE:
+            return True, code + "\n" + only_generated_code
+        elif strategy == GenerationStrategy.GENERATE:
+            return True, only_generated_code
     only_generated_code = remove_old_notes(only_generated_code)
     interrupt = [
         interrupt for interrupt in interrupts if interrupt.input_id == interrupt_id
     ][0]
     interrupt_callable = interrupt.callable
-    prompt = interrupt_callable(processor.interrupt_data, only_generated_code, code, prompt_util)
+    prompt = interrupt_callable(processor.interrupt_data, only_generated_code, code, prompt_util, strategy)
     return False, prompt
 
 
