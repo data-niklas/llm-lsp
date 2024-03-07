@@ -157,19 +157,26 @@ async def create_lsp(directory):
     )
     return lsp
 
-async def main(args):
-    lsp = await create_lsp(args.directory)
+async def create_generator(strategy, directory):
+    lsp = await create_lsp(directory)
     interrupts = [
         Interrupt(token=DEPRECATION_INTERRUPT_TOKEN, callable=handle_deprecation_interrupt),
         Interrupt(token=SIGNATURE_INTERRUPT_TOKEN, callable=handle_signature_interrupt)
     ]
-    logger.setLevel(args.level)
     pipeline, tokenizer = initialize_generation(interrupts)
+    generator = LspGenerator(pipeline, tokenizer, lsp, interrupts, LspLogitsProcessor, strategy)
+    return generator    
+
+async def main(args):
+    generator = await create_generator(args.strategy, args.directory)
     code = ""
     with open(args.file, "r") as f:
         code = f.read()
-    strategy = args.strategy
-    generator = LspGenerator(pipeline, tokenizer, lsp, interrupts, LspLogitsProcessor, strategy)
+    logger.setLevel(args.level)
+
+    code = ""
+    with open(args.file, "r") as f:
+        code = f.read()
     code = generator(code, args.file)
     #code = generate_code(pipeline, tokenizer, lsp, args, code, interrupts)
     hl = highlight_code(code)
@@ -183,10 +190,10 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/generate_pydantic.md")
+    parser.add_argument("-f", "--file", default="tests/tsv2py.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
-    parser.add_argument("-s", "--strategy", default="GENERATE")
+    parser.add_argument("-s", "--strategy", default="COMPLETE")
     return parser.parse_args()
 
 

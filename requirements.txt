@@ -3,7 +3,8 @@ torch
 accelerate
 
 sentencepiece
-
+# For eval
+datasets
 # Debug
 pygments
 logzero

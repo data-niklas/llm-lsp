@@ -134,6 +134,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.strategy = strategy
         self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
         self.file = file
+        self.signature_cache = {}
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         return self.tokenizer.decode(input_ids)
@@ -280,6 +281,17 @@ class LspLogitsProcessor(LogitsProcessor):
             )
         ]
 
+    def filter_builtin_signatures(self, signatures):
+        def is_builtin(signature):
+            keyword = self.get_signature_keyword(signature)
+            if keyword not in self.signature_cache:
+                return False
+            completion = self.signature_cache[keyword]
+            return completion.detail == "builtins"
+
+
+        return [signature for signature in signatures if not is_builtin(signature) ]
+
     def uprank_divider_after_completion(self, scores, input_ids):
         text = self.tokenizer.decode(input_ids[-1:])
         open_token = self.tokenizer(text + "(").input_ids[-1]
@@ -350,6 +362,22 @@ class LspLogitsProcessor(LogitsProcessor):
     def get_completions_overlap(self, completions: List[str], trigger_phrase: str):
         return [completion.replace(trigger_phrase, "", 1) for completion in completions]
 
+    def get_signature_keyword(self, signature: SignatureInformation) -> str:
+        return signature.label.split("(")[0].split("=")[0]
+
+    def increase_signature_cache(self, signature_help: SignatureHelp, completions):
+        signatures = signature_help.signatures
+        for signature in signatures:
+            # TODO: replace string splitting with parsing per language
+            keyword = self.get_signature_keyword(signature)
+            if keyword in self.signature_cache:
+                continue
+            relevant_completions = [completion for completion in completions if self.get_completion_text(completion) == keyword]
+            if len(relevant_completions) == 0:
+                continue
+            self.signature_cache[keyword] = relevant_completions[0]
+
+
     def scores_for_batch(
         self, input_ids: LongTensor, scores: FloatTensor
     ) -> FloatTensor:
@@ -366,6 +394,8 @@ class LspLogitsProcessor(LogitsProcessor):
                 resolved_completions = []
             trigger_phrase = re.search(r"[A-Za-z_]*$", current_code).group(0)
             signature_help = lsp_code_file.ask_signature()
+            self.increase_signature_cache(signature_help, resolved_completions)
+            signature_help.signatures = self.filter_builtin_signatures(signature_help.signatures)
             filtered_completions = self.filter_misc(
                 self.filter_completions_by_postfix(
                     trigger_phrase,
