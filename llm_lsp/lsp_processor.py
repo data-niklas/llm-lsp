@@ -407,6 +407,10 @@ class LspLogitsProcessor(LogitsProcessor):
                     ),
                 )
             )
+            if not hasattr(self, "i"):
+                self.i = 0
+            else:
+                self.i += 1
             (
                 non_deprecated_completions,
                 deprecated_completions,

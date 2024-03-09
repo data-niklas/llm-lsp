@@ -27,10 +27,10 @@ class Prompt:
         lines = text.splitlines()
         if len(lines) > 0 and "```" in lines[0]:
             lines = lines[1:]
-
-        if len(lines) > 0 and "```" in lines[-1]:
-            lines = lines[:-1]
+            text = "\n".join(lines)
+            return text.split("\n```")[0]
         return "\n".join(lines)
+
 
     def get_generated_code(self, text):
         text = text.replace("<s> ", "<s>")
@@ -40,15 +40,17 @@ class Prompt:
 
 
 def make_prompt(code, strategy, system_prompt_enabled: bool = True):
+    system_prompt_enabled = False
     if strategy == GenerationStrategy.COMPLETE:
         system_prompt = "Follow the instructions in the code comments for additional instructions on how to complete the code. Return only the completion."
-        user_prompt = f"Complete the provided Python code. Return only the completion:\n```py\n{code}\n```"
+        #user_prompt = f"Complete the provided Python code. Return only the completion:\n```py\n{code}\n```"
+        user_prompt = f"Complete the following Python code. Return only code:\n```py\n{code}\n```"
         if system_prompt_enabled:
             return [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-        return [{"role": "user", "content": system_prompt + " " + user_prompt}]
+        return [{"role": "user", "content": user_prompt}]
     elif strategy == GenerationStrategy.GENERATE:
         system_prompt = "Follow the instructions in the code comments for additional instructions on how to generate the code. Return only the generation."
         user_prompt = code
@@ -57,4 +59,4 @@ def make_prompt(code, strategy, system_prompt_enabled: bool = True):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
-        return [{"role": "user", "content": system_prompt + " " + user_prompt}]
+        return [{"role": "user", "content": user_prompt}]

@@ -21,7 +21,7 @@ class LspGenerator:
         interrupt_input_ids = [interrupt.input_id for interrupt in self.interrupts]
         # Last \n needed such that it will be cut off later by the +1
         # code is the initial instruction for the generation
-        prompt = self.prompt_util.format(code, "", self.strategy)
+        prompt = self.prompt_util.format(code, code, self.strategy)
 
         processor = self.logits_processor_cls(self.tokenizer, self.lsp, self.prompt_util, self.pipeline, self.strategy, file)
         while True:
@@ -38,5 +38,5 @@ class LspGenerator:
             last_token_ids = last["generated_token_ids"]
             finished, text = get_new_prompt_or_finish(self.tokenizer, self.interrupts, last_token_ids, self.prompt_util, processor, self.prompt_util.code, self.strategy)
             if finished:
-                return text
+                return text[len(code):]
             prompt = text
