@@ -1,3 +1,7 @@
+from llm_lsp.interrupts import Interrupt
+from llm_lsp.prompt import Prompt
+from llm_lsp.code_utils import determine_indentation
+from typing import Any
 import importlib
 import sys
 import json
@@ -44,6 +48,36 @@ def is_deprecated(item):
             return False
         variable = getattr(variable, variable_part)
     return hasattr(variable, "__deprecated__")
+
+
+class CompletionInterrupt(Interrupt):
+    def __init__(self):
+        super().__init__("[COMPLETION_INTERRUPT]")
+
+
+    def add_deprecation_notes(self, code: str, completion_items):
+        try:
+            first_lines, last_line = code.rsplit("\n", 1)
+        except ValueError:
+            first_lines, last_line = "", code
+
+        indentation = determine_indentation(last_line)
+        comments = [
+            indentation
+            + "# Deprecation note: "
+            + get_deprecation_message(
+                completion_item.detail + "." + completion_item.insert_text
+            ).strip()
+            for completion_item in completion_items
+        ]
+        comments_text = "\n".join(comments)
+        return first_lines + "\n" + comments_text + "\n" + last_line
+
+
+    def edit_generated_code_for_completion(self, generated_code: str, context: Any) -> str:
+        generated_code_with_notes = self.add_deprecation_notes(generated_code, context)
+        return generated_code_with_notes
+
 
 
 if __name__ == "__main__":

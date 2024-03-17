@@ -1,27 +1,42 @@
-from llm_lsp.strategy import GenerationStrategy
 from jinja2 import TemplateError
+from typing import List, Dict, Any
+from transformers import AutoTokenizer
+from llm_lsp.message_formatters import MessageFormatter
 
 class Prompt:
-    def __init__(self, template, tokenizer):
+    def __init__(self, tokenizer: AutoTokenizer, message_formatter: MessageFormatter, initial_text: str):
         self.tokenizer = tokenizer
-        self.template = template
+        self.initial_text = initial_text
+        self.message_formatter = message_formatter
+
+    def init_completion_prompt(self):
+        try:
+            messages = self.message_formatter.create_completion_messages(self.initial_text, True)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        # new_code is not part of the prompt, but part of the output
+        except TemplateError:
+            messages = self.message_formatter.create_completion_messages(self.initial_text, False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        self.initial_prompt = prompt
+        self.code_prefix = self.initial_text
+
+    def init_generation_prompt(self):
+        try:
+            messages = self.message_formatter.create_generation_messages(self.initial_text, True)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        # new_code is not part of the prompt, but part of the output
+        except TemplateError:
+            messages = self.message_formatter.create_generation_messages(self.initial_text, False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+        self.initial_prompt = prompt
+        self.code_prefix = ""
 
     def wrap_in_code_block(self, code):
         # TODO: generalize the py
         return "```py\n" + code
 
-    def format(self, code, new_code, strategy) -> str:
-        self.code = code
-        try:
-            messages = self.template(code, strategy, True)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
-        # new_code is not part of the prompt, but part of the output
-        except TemplateError:
-            messages = self.template(code, strategy, False)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
-            
-        self.prompt = prompt
-        return prompt + self.wrap_in_code_block(new_code)
+    def format(self, new_code) -> str:
+        return self.initial_prompt + self.wrap_in_code_block(new_code)
 
     def extract_from_markdown_code_block(self, text: str):
         lines = text.splitlines()
@@ -34,29 +49,10 @@ class Prompt:
 
     def get_generated_code(self, text):
         text = text.replace("<s> ", "<s>")
-        generated_text = text[len(self.prompt) :]
+        generated_text = text[len(self.initial_prompt) :]
         generated_code = self.extract_from_markdown_code_block(generated_text)
         return generated_code
 
-
-def make_prompt(code, strategy, system_prompt_enabled: bool = True):
-    system_prompt_enabled = False
-    if strategy == GenerationStrategy.COMPLETE:
-        system_prompt = "Follow the instructions in the code comments for additional instructions on how to complete the code. Return only the completion."
-        #user_prompt = f"Complete the provided Python code. Return only the completion:\n```py\n{code}\n```"
-        user_prompt = f"Complete the following Python code. Return only code:\n```py\n{code}\n```"
-        if system_prompt_enabled:
-            return [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-        return [{"role": "user", "content": user_prompt}]
-    elif strategy == GenerationStrategy.GENERATE:
-        system_prompt = "Follow the instructions in the code comments for additional instructions on how to generate the code. Return only the generation."
-        user_prompt = code
-        if system_prompt_enabled:
-            return [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-        return [{"role": "user", "content": user_prompt}]
+    def get_whole_code(self, text):
+        generated_code = self.get_generated_code(text)
+        return self.code_prefix + generated_code

@@ -6,7 +6,7 @@ MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 2,
+    "num_beams": 4,
     # "diversity_penalty": 1.0,
     "do_sample": True,
     "top_k": 50,
@@ -17,7 +17,7 @@ GLOBAL_CONFIGURATION = {
     "max_new_tokens": 2048,
     "repetition_penalty": 1.3
 }
-DEPRECATION_INTERRUPT_TOKEN = '[DEPRECATION_INTERRUPT]'
+COMPLETION_INTERRUPT_TOKEN = '[COMPLETION_INTERRUPT]'
 SIGNATURE_INTERRUPT_TOKEN = '[SIGNATURE_INTERRUPT]'
 
 MAXIMUM_DOCUMENTATION_LENGTH = 500

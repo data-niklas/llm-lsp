@@ -14,10 +14,15 @@ import re
 
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
-from llm_lsp.constants import DEPRECATION_INTERRUPT_TOKEN, SIGNATURE_INTERRUPT_TOKEN
-from llm_lsp.deprecation_messages import is_deprecated
-from llm_lsp.strategy import GenerationStrategy
+from llm_lsp.interrupts.completion import is_deprecated
+from dataclasses import dataclass
+from typing import Any
 
+
+@dataclass
+class InterruptGeneration(BaseException):
+    interrupt_token_id: int
+    context: Any
 
 def custom_completion_item_hash(self):
     return hash((self.label, self.kind))
@@ -26,127 +31,30 @@ def custom_completion_item_hash(self):
 CompletionItem.__hash__ = custom_completion_item_hash
 
 
-class CompletionItemRanker:
-    def __init__(self, pipeline, tokenizer):
-        self.pipeline = pipeline
-        self.tokenizer = tokenizer
-        self.configuration = {
-            # "num_beam_groups": 0,
-            "num_beams": 2,
-            # "diversity_penalty": 1.0,
-            "do_sample": True,
-            "top_k": 50,
-            "top_p": 0.95,
-            "num_return_sequences": 1,
-            "return_full_text": False,
-            "temperature": 0.7,
-            "max_new_tokens": 2048,
-        }
-        self.cache = {}
-        self.categorize_prompt_template = "[INST] Categorize the goal and usage of the provided code piece. In addition to the code, you will receive the documentation and further details. Return the result as a JSON array of strings. Wrap strings in \". Do not return further comments, ONLY return the JSON array. Here is an example:\nCODE: 'to_dict(self)'\nDOCUMENTATION: 'Convert an instance of self to a Python dictionary'\nDETAILS: ''\nRESULT: [\"convert\", \"python\"]\n[/INST]\n"
-        self.rank_prompt_template = "[INST] You will be provided with code, a code snippet and the tags associated with the code snippet. Rank the relevance of the code piece to the previous code based on its tags. '1' is very relevant, whilst '0' is unrelevant. Return only the score as a literal. Do not return further comments.\n[/INST]\n"
-        # TODO: provide example in rank_prompt_template
-        # TODO: mention scores between 0 and 1
-
-    def summarize_completions(self, completions: List[CompletionItem]) -> List[str]:
-        """Returns a list of tags for the completion"""
-
-        def create_prompt():
-            for completion in completions:
-                yield self.categorize_prompt_template + f"CODE: '{completion.label}'\nDOCUMENTATION: '{completion.documentation.value}'\nDETAILS: '{completion.detail}'"
-
-        def get_tags(sequences, completion):
-            result_text = sequences[0]["generated_text"].strip()
-            if result_text.startswith("RESULT:"):
-                result_text = result_text[7:].strip()
-            if result_text.startswith("JSON ARRAY:"):
-                result_text = result_text[10:].strip()
-            try:
-                tags = list(set(json.loads(result_text)))
-                # logger.debug("TAGS: [" + ", ".join(tags) + "]")
-                return tags
-            except json.JSONDecodeError:
-                logger.error(result_text)
-                return [completion.insert_text]
-
-        return [
-            get_tags(result, completion)
-            for result, completion in zip(
-                self.pipeline(
-                    create_prompt(),
-                    use_cache=True,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    **self.configuration,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                ),
-                completions,
-            )
-        ]
-
-    def rank_completions(self, code, completions):
-        """Returns a list of tuples of completions with their score"""
-        completion_tags = self.summarize_completions(completions)
-
-        def create_prompt():
-            for tags, completion in zip(completion_tags, completions):
-                snippet = completion.label
-                tags = ", ".join(tags)
-                yield self.rank_prompt_template + f"CODE:\n```\n{code}\n```\nSNIPPET: '{snippet}'\nTAGS: '{tags}'"
-
-        def get_score(sequences, completion):
-            result_text = sequences[0]["generated_text"].strip()
-            if result_text.startswith("RESULT:"):
-                result_text = result_text[7:].strip()
-            if result_text.startswith("SCORE:"):
-                result_text = result_text[6:].strip()
-            try:
-                return float(result_text)
-            except ValueError:
-                logger.error("Could not parse: '" + result_text + "'")
-                return 0
-
-        return [
-            get_score(result, completion)
-            for result, completion in zip(
-                self.pipeline(
-                    create_prompt(),
-                    use_cache=True,
-                    eos_token_id=self.tokenizer.eos_token_id,
-                    **self.configuration,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                ),
-                completions,
-            )
-        ]
-
-
-# TODO Chat templates
-
-
 class LspLogitsProcessor(LogitsProcessor):
     # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
     # This should stop Parser(fields=Parser)
-    def __init__(self, tokenizer, lsp_client, prompt_util, pipeline, strategy, file):
-        tokenizer.add_special_tokens({})
+    def __init__(self, tokenizer, lsp_clients, prompt_utils, filenames, expand_size):
         self.tokenizer: PreTrainedTokenizer = tokenizer
-        self.lsp_client: BaseLanguageClient = lsp_client
-        self.prompt_util = prompt_util
-        self.strategy = strategy
-        self.completion_ranker = CompletionItemRanker(pipeline, tokenizer)
-        self.file = file
+        self.lsp_clients: BaseLanguageClient = lsp_clients
+        self.prompt_utils = prompt_utils
+        self.filenames = filenames
         self.signature_cache = {}
+        self.expand_size = expand_size
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
-        return self.tokenizer.decode(input_ids)
+        # remove padding
+        token_id = self.tokenizer.pad_token_id
+        index = (input_ids != token_id).nonzero()[0].item()
+        input_ids = input_ids[index:]
+        return self.tokenizer.decode(input_ids, skip_special_tokens=True)
 
-    def current_code(self, input_ids: LongTensor) -> str:
+    def current_code(self, i, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
-        generated_code = self.prompt_util.get_generated_code(generated_code_with_prompt)
-        if self.strategy == GenerationStrategy.COMPLETE:
-            return self.prompt_util.code + generated_code
-        elif self.strategy == GenerationStrategy.GENERATE:
-            return generated_code
+        code = self.prompt_utils[i//self.expand_size].get_whole_code(generated_code_with_prompt)
+        return code
+
 
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
@@ -339,11 +247,9 @@ class LspLogitsProcessor(LogitsProcessor):
                 return False
         return True
 
-    def interrupt(self, scores, data, i):
-        input_id = self.tokenizer.convert_tokens_to_ids(i)
-        scores[input_id] = 100
-        self.interrupt_data = data
-        return scores
+    def interrupt(self, context, j):
+        input_id = self.tokenizer.convert_tokens_to_ids(j)
+        raise InterruptGeneration(interrupt_token_id=input_id, context=context) 
 
     def get_completion_text(self, completion):
         text = self.completion_text(completion)
@@ -377,17 +283,19 @@ class LspLogitsProcessor(LogitsProcessor):
                 continue
             self.signature_cache[keyword] = relevant_completions[0]
 
+    def filename(self, i):
+        if self.filenames[i//self.expand_size] is not None:
+            return self.filenames[i//self.expand_size]
+        else:
+            return "__generate__.py"
 
     def scores_for_batch(
-        self, input_ids: LongTensor, scores: FloatTensor
+        self, i, input_ids: LongTensor, scores: FloatTensor
     ) -> FloatTensor:
         """Returns a 1d FloatTensor for a single batch"""
-        current_code = self.current_code(input_ids)
-        if self.strategy == GenerationStrategy.COMPLETE:
-            filename = self.file
-        else:
-            filename = "__generate__.py"
-        with LspCodeFile(filename, current_code, self.lsp_client) as lsp_code_file:
+        current_code = self.current_code(i, input_ids)
+        filename = self.filename(i)
+        with LspCodeFile(filename, current_code, self.lsp_clients[i//self.expand_size]) as lsp_code_file:
             if self.should_complete(current_code):
                 resolved_completions = lsp_code_file.ask_completions()
             else:
@@ -407,10 +315,6 @@ class LspLogitsProcessor(LogitsProcessor):
                     ),
                 )
             )
-            if not hasattr(self, "i"):
-                self.i = 0
-            else:
-                self.i += 1
             (
                 non_deprecated_completions,
                 deprecated_completions,
@@ -418,18 +322,16 @@ class LspLogitsProcessor(LogitsProcessor):
             if not self.check_deprecation_documentation_included(
                 current_code, deprecated_completions
             ):
-                scores = self.interrupt(
-                    scores, deprecated_completions, DEPRECATION_INTERRUPT_TOKEN
+                self.interrupt(
+                    deprecated_completions, "[COMPLETION_INTERRUPT]"
                 )
-                return scores
             if not self.check_signature_documentation_included(
                 current_code, signature_help
             ):
-                scores = self.interrupt(
-                    scores, signature_help, SIGNATURE_INTERRUPT_TOKEN
+                self.interrupt(
+                    signature_help, "[SIGNATURE_INTERRUPT]"
                 )
                 # TODO: do not interrupt on stdlib stuff
-                return scores
 
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
             # for each completion text, compare to trigger_phrase and get the next few characters
@@ -468,8 +370,22 @@ class LspLogitsProcessor(LogitsProcessor):
         if os.getenv("DISABLE") is not None:
             return scores
         for i in range(input_ids.shape[0]):
-            scores[i] = self.scores_for_batch(input_ids[i], scores[i])
+            try:
+                scores[i] = self.scores_for_batch(i, input_ids[i], scores[i])
+            except InterruptGeneration as ig:
+                scores[i][ig.interrupt_token_id] = 100
+                self.input_ids = input_ids
+                self.interrupt_beam = i
+                self.interrupt_context = ig.context
+                self.interrupt_token_id = ig.interrupt_token_id
+                return scores
         return scores
+
+    def resume(self):
+        self.input_ids = None
+        self.interrupt_context = None
+        self.interrupt_beam = None
+        self.interrupt_token_id = None
 
 
 class LspCodeFile:
