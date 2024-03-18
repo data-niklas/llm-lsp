@@ -1,9 +1,9 @@
-from llm_lsp.interrupts import Interrupt
+from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
 from llm_lsp.code_utils import determine_indentation
 from typing import Any
 
-class SignatureInterrupt(Interrupt):
+class SignatureInterrupt(InterruptType):
     def __init__(self, maximum_documentation_length = 500):
         super().__init__("[SIGNATURE_INTERRUPT]")
         self.maximum_documentation_length = maximum_documentation_length

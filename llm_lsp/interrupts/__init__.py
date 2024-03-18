@@ -3,7 +3,7 @@ from typing import Callable, Any, Optional
 from abc import ABC, abstractmethod
 from llm_lsp.prompt import Prompt
 from transformers import StoppingCriteria
-
+from torch import Tensor
 
 class InterruptStoppingCriteria(StoppingCriteria):
     def __init__(self, interrupt_token_ids):
@@ -16,7 +16,15 @@ class InterruptStoppingCriteria(StoppingCriteria):
                 return True
         return False
 
-class Interrupt(ABC):
+@dataclass
+class Interrupt:
+    # Tensor of (return_count * beams * batched_items_count) x currently_generated_tokens
+    input_ids: Tensor
+    interrupt_beam: int  
+    interrupt_context: Any
+    interrupt_token_id: int
+
+class InterruptType(ABC):
     def __init__(self, token: str):
         self.token = token
         self.input_id = None

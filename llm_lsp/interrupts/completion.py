@@ -1,4 +1,4 @@
-from llm_lsp.interrupts import Interrupt
+from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
 from llm_lsp.code_utils import determine_indentation
 from typing import Any
@@ -50,7 +50,7 @@ def is_deprecated(item):
     return hasattr(variable, "__deprecated__")
 
 
-class CompletionInterrupt(Interrupt):
+class CompletionInterrupt(InterruptType):
     def __init__(self):
         super().__init__("[COMPLETION_INTERRUPT]")
 

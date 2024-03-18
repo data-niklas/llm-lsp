@@ -5,12 +5,12 @@ from llm_lsp.prompt import Prompt
 from llm_lsp.message_formatters import MessageFormatter
 from llm_lsp.message_formatters.default import DefaultMessageFormatter
 from pygls.lsp.client import BaseLanguageClient
-from llm_lsp.interrupts import Interrupt, InterruptStoppingCriteria
+from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
 from llm_lsp.interrupts.completion import CompletionInterrupt
 from llm_lsp.interrupts.signature import SignatureInterrupt
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
-from llm_lsp.lsp_logits_guider import LspLogitsProcessor
+from llm_lsp.lsp.logits_guider import LspLogitsProcessor
 from llm_lsp.code_utils import remove_notes, remove_old_notes
 import torch.nn.functional as F
 
@@ -20,7 +20,7 @@ DEFAULT_INTERRUPTS = [
 ]
 
 class Generator:
-    def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = DefaultMessageFormatter(), interrupts: List[Interrupt] = DEFAULT_INTERRUPTS):
+    def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = DefaultMessageFormatter(), interrupts: List[InterruptType] = DEFAULT_INTERRUPTS):
         self.model = model
         self.tokenizer = tokenizer
         self.generation_config = generation_config
@@ -81,6 +81,48 @@ class Generator:
         input_ids = F.pad(input_ids, (pad_to_len-inputs_len,0),value=pad_token_id)
         return input_ids, edited_input_id
 
+    def interrupt_input_ids(self):
+        return [interrupt.input_id for interrupt in self.interrupts]
+
+    def start_generation(self, prompt, logits_guider, config):
+        stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
+
+        prompt_input_ids = self.tokenizer(prompt, return_tensors='pt').input_ids
+        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider], stopping_criteria=[stopping_criterium], **config)
+        last_token_ids = generated_sequence[0]
+        last_token_ids = self.remove_padding(last_token_ids)
+        #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
+        decoded_text = self.decode_tokens_remove_interrupt(self.interrupt_input_ids(), last_token_ids)
+        return decoded_text
+
+    def resume_generation(self, input_ids, batch_size, logits_guider, config):
+        stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
+        generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=[logits_guider], stopping_criteria=[stopping_criterium], **config)
+        last_token_ids = generated_sequences[0]
+        last_token_ids = self.remove_padding(last_token_ids)
+        #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
+        decoded_text = self.decode_tokens_remove_interrupt(self.interrupt_input_ids(), last_token_ids) 
+        return decoded_text   
+
+    def find_interrupt_type(self, interrupt):
+        return [i for i in self.interrupts if i.input_id == interrupt.interrupt_token_id][0]
+
+    def edit_generation_text_for_completion(self, decoded_text, prompt_util, interrupt):
+        generated_code = prompt_util.get_generated_code(decoded_text)
+        generated_code = remove_old_notes(generated_code)
+
+        interrupt_type = self.find_interrupt_type(interrupt)
+        edited_generated_code = interrupt_type.edit_generated_code_for_completion(generated_code, interrupt.interrupt_context)
+        edited_prompt = prompt_util.format(edited_generated_code)
+        return edited_prompt
+
+    def edit_input_ids(self, interrupt, edited_prompt):
+        edited_input_ids = self.tokenizer(edited_prompt, return_tensors='pt').input_ids
+        input_ids = interrupt.input_ids
+        input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
+        input_ids[interrupt.interrupt_beam] = edited_input_ids
+        return input_ids
+
     async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
         batch_size = 1
         # TODO: allow higher batch size
@@ -89,52 +131,28 @@ class Generator:
         prompt_util.init_completion_prompt()
         prompt = prompt_util.format(code)
 
-        interrupt_input_ids = [interrupt.input_id for interrupt in self.interrupts]
-
         config = self.generation_config.copy()
         if "max_new_tokens" in config:
             code_tokens = len(self.tokenizer(code).input_ids)
             config["max_new_tokens"] += code_tokens
         expand_size = config["num_beams"] if "num_beams" in config else 1
         logits_guider = LspLogitsProcessor(self.tokenizer, [lsp], [prompt_util], [filename], expand_size)
-        prompt_input_ids = self.tokenizer(prompt, return_tensors='pt').input_ids
-        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider], stopping_criteria=[InterruptStoppingCriteria(interrupt_input_ids)], **config)
-        last_token_ids = generated_sequence[0]
-        last_token_ids = self.remove_padding(last_token_ids)
-        #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
-        decoded_text = self.decode_tokens_remove_interrupt(interrupt_input_ids, last_token_ids)
-        if logits_guider.interrupt_context is None:
+        decoded_text = self.start_generation(prompt, logits_guider, config)
+        if logits_guider.interrupt is None:
             return prompt_util.get_whole_code(decoded_text)[len(code):]
-        generated_code = prompt_util.get_generated_code(decoded_text)
-
-        interrupt = [i for i in self.interrupts if i.input_id == logits_guider.interrupt_token_id][0]
-        edited_generated_code = interrupt.edit_generated_code_for_completion(generated_code, logits_guider.interrupt_context)
-        edited_prompt = prompt_util.format(edited_generated_code)
-        edited_input_ids = self.tokenizer(edited_prompt, return_tensors='pt').input_ids
-        input_ids = logits_guider.input_ids
-        input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
-        input_ids[logits_guider.interrupt_beam] = edited_input_ids[0]
+        interrupt = logits_guider.interrupt
+        edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)
+        input_ids = self.edit_input_ids(interrupt, edited_prompt)
         logits_guider.resume()
 
         while True:
-            generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=[logits_guider], stopping_criteria=[InterruptStoppingCriteria(interrupt_input_ids)], **config)
-            last_token_ids = generated_sequences[0]
-            last_token_ids = self.remove_padding(last_token_ids)
-            #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
-            decoded_text = self.decode_tokens_remove_interrupt(interrupt_input_ids, last_token_ids)
-            if logits_guider.interrupt_context is None:
+            decoded_text = self.resume_generation(input_ids, batch_size, logits_guider, config)
+            if logits_guider.interrupt is None:
                 result_code = prompt_util.get_whole_code(decoded_text)
                 result_code = remove_notes(result_code)
                 result_code = result_code[len(code):]
                 return result_code
-            generated_code = prompt_util.get_generated_code(decoded_text)
-            generated_code = remove_old_notes(generated_code)
-
-            interrupt = [i for i in self.interrupts if i.input_id == logits_guider.interrupt_token_id][0]
-            edited_generated_code = interrupt.edit_generated_code_for_completion(generated_code, logits_guider.interrupt_context)
-            edited_prompt = prompt_util.format(edited_generated_code)
-            edited_input_ids = self.tokenizer(edited_prompt, return_tensors='pt').input_ids
-            input_ids = logits_guider.input_ids
-            input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
-            input_ids[logits_guider.interrupt_beam] = edited_input_ids
+            interrupt = logits_guider.interrupt
+            edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)
+            input_ids = self.edit_input_ids(interrupt, edited_prompt)
             logits_guider.resume()

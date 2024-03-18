@@ -15,6 +15,8 @@ import re
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.interrupts.completion import is_deprecated
+from llm_lsp.interrupts import Interrupt
+from llm_lsp.lsp.file import LspCodeFile
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +25,7 @@ from typing import Any
 class InterruptGeneration(BaseException):
     interrupt_token_id: int
     context: Any
+
 
 def custom_completion_item_hash(self):
     return hash((self.label, self.kind))
@@ -41,6 +44,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.filenames = filenames
         self.signature_cache = {}
         self.expand_size = expand_size
+        self.interrupt = None
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         # remove padding
@@ -52,9 +56,11 @@ class LspLogitsProcessor(LogitsProcessor):
     def current_code(self, i, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
-        code = self.prompt_utils[i//self.expand_size].get_whole_code(generated_code_with_prompt)
+        code = self.prompt_utils[i // self.expand_size].get_whole_code(
+            generated_code_with_prompt
+        )
+        code = code[len(self.prompt_utils[i // self.expand_size].initial_text):]
         return code
-
 
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
@@ -114,21 +120,22 @@ class LspLogitsProcessor(LogitsProcessor):
 
     @lru_cache
     def tokenize_overlap(self, code_token_len, code: str, overlap):
-        return self.tokenizer(
-            code +
-            overlap, add_special_tokens=False
-        ).input_ids[code_token_len:]
-
+        return self.tokenizer(code + overlap, add_special_tokens=False).input_ids[
+            code_token_len:
+        ]
 
     def overlap_unique_first_tokens(self, code: str, overlaps):
         # Assume that by concatenating the chosen tokens do not change
         code_token_len = len(self.tokenizer(code, add_special_tokens=False).input_ids)
-        return list(set([
-            self.tokenize_overlap(code_token_len, code, overlap)[0]
-            for overlap in overlaps
-            if len(self.tokenize_overlap(code_token_len, code, overlap)) > 0
-        ]))
-
+        return list(
+            set(
+                [
+                    self.tokenize_overlap(code_token_len, code, overlap)[0]
+                    for overlap in overlaps
+                    if len(self.tokenize_overlap(code_token_len, code, overlap)) > 0
+                ]
+            )
+        )
 
     def count_full_match(self, indexes_after_overlap, tokens):
         return sum(
@@ -137,7 +144,6 @@ class LspLogitsProcessor(LogitsProcessor):
                 for index, tokens in zip(indexes_after_overlap, tokens)
             ]
         )
-
 
     def ensure_deprecated_below_non_deprecated(
         self, scores, non_deprecated, deprecated
@@ -197,8 +203,7 @@ class LspLogitsProcessor(LogitsProcessor):
             completion = self.signature_cache[keyword]
             return completion.detail == "builtins"
 
-
-        return [signature for signature in signatures if not is_builtin(signature) ]
+        return [signature for signature in signatures if not is_builtin(signature)]
 
     def uprank_divider_after_completion(self, scores, input_ids):
         text = self.tokenizer.decode(input_ids[-1:])
@@ -247,9 +252,9 @@ class LspLogitsProcessor(LogitsProcessor):
                 return False
         return True
 
-    def interrupt(self, context, j):
+    def trigger_interrupt(self, context, j):
         input_id = self.tokenizer.convert_tokens_to_ids(j)
-        raise InterruptGeneration(interrupt_token_id=input_id, context=context) 
+        raise InterruptGeneration(interrupt_token_id=input_id, context=context)
 
     def get_completion_text(self, completion):
         text = self.completion_text(completion)
@@ -278,14 +283,18 @@ class LspLogitsProcessor(LogitsProcessor):
             keyword = self.get_signature_keyword(signature)
             if keyword in self.signature_cache:
                 continue
-            relevant_completions = [completion for completion in completions if self.get_completion_text(completion) == keyword]
+            relevant_completions = [
+                completion
+                for completion in completions
+                if self.get_completion_text(completion) == keyword
+            ]
             if len(relevant_completions) == 0:
                 continue
             self.signature_cache[keyword] = relevant_completions[0]
 
     def filename(self, i):
-        if self.filenames[i//self.expand_size] is not None:
-            return self.filenames[i//self.expand_size]
+        if self.filenames[i // self.expand_size] is not None:
+            return self.filenames[i // self.expand_size]
         else:
             return "__generate__.py"
 
@@ -295,7 +304,9 @@ class LspLogitsProcessor(LogitsProcessor):
         """Returns a 1d FloatTensor for a single batch"""
         current_code = self.current_code(i, input_ids)
         filename = self.filename(i)
-        with LspCodeFile(filename, current_code, self.lsp_clients[i//self.expand_size]) as lsp_code_file:
+        with LspCodeFile(
+            filename, current_code, self.lsp_clients[i // self.expand_size]
+        ) as lsp_code_file:
             if self.should_complete(current_code):
                 resolved_completions = lsp_code_file.ask_completions()
             else:
@@ -303,7 +314,9 @@ class LspLogitsProcessor(LogitsProcessor):
             trigger_phrase = re.search(r"[A-Za-z_]*$", current_code).group(0)
             signature_help = lsp_code_file.ask_signature()
             self.increase_signature_cache(signature_help, resolved_completions)
-            signature_help.signatures = self.filter_builtin_signatures(signature_help.signatures)
+            signature_help.signatures = self.filter_builtin_signatures(
+                signature_help.signatures
+            )
             filtered_completions = self.filter_misc(
                 self.filter_completions_by_postfix(
                     trigger_phrase,
@@ -322,15 +335,11 @@ class LspLogitsProcessor(LogitsProcessor):
             if not self.check_deprecation_documentation_included(
                 current_code, deprecated_completions
             ):
-                self.interrupt(
-                    deprecated_completions, "[COMPLETION_INTERRUPT]"
-                )
+                self.trigger_interrupt(deprecated_completions, "[COMPLETION_INTERRUPT]")
             if not self.check_signature_documentation_included(
                 current_code, signature_help
             ):
-                self.interrupt(
-                    signature_help, "[SIGNATURE_INTERRUPT]"
-                )
+                self.trigger_interrupt(signature_help, "[SIGNATURE_INTERRUPT]")
                 # TODO: do not interrupt on stdlib stuff
 
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
@@ -341,13 +350,21 @@ class LspLogitsProcessor(LogitsProcessor):
                 self.get_completions_text(deprecated_completions),
             )
             (non_deprecated_completion_overlap, deprecated_completion_overlap) = (
-                self.get_completions_overlap(non_deprecated_completion_texts, trigger_phrase),
-                self.get_completions_overlap(deprecated_completion_texts, trigger_phrase),
+                self.get_completions_overlap(
+                    non_deprecated_completion_texts, trigger_phrase
+                ),
+                self.get_completions_overlap(
+                    deprecated_completion_texts, trigger_phrase
+                ),
             )
 
             (non_deprecated_first_tokens, deprecated_first_tokens) = (
-                self.overlap_unique_first_tokens(current_code, non_deprecated_completion_overlap),
-                self.overlap_unique_first_tokens(current_code, deprecated_completion_overlap)
+                self.overlap_unique_first_tokens(
+                    current_code, non_deprecated_completion_overlap
+                ),
+                self.overlap_unique_first_tokens(
+                    current_code, deprecated_completion_overlap
+                ),
             )
             # if len(non_deprecated_completions) > 0:
             #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
@@ -374,83 +391,14 @@ class LspLogitsProcessor(LogitsProcessor):
                 scores[i] = self.scores_for_batch(i, input_ids[i], scores[i])
             except InterruptGeneration as ig:
                 scores[i][ig.interrupt_token_id] = 100
-                self.input_ids = input_ids
-                self.interrupt_beam = i
-                self.interrupt_context = ig.context
-                self.interrupt_token_id = ig.interrupt_token_id
+                self.interrupt = Interrupt(
+                    input_ids=input_ids,
+                    interrupt_beam=i,
+                    interrupt_context=ig.context,
+                    interrupt_token_id=ig.interrupt_token_id,
+                )
                 return scores
         return scores
 
     def resume(self):
-        self.input_ids = None
-        self.interrupt_context = None
-        self.interrupt_beam = None
-        self.interrupt_token_id = None
-
-
-class LspCodeFile:
-    def __init__(self, file, code, lsp_client):
-        self.path = file + "_" + str(uuid.uuid1())
-        self.uri = "file://" + path.abspath(self.path)
-        self.text_document_item = TextDocumentItem(
-            uri=self.uri,
-            language_id="python",
-            version=1,
-            text=code,
-        )
-        self.lsp_client = lsp_client
-        self.code = code
-
-    def __enter__(self):
-        with open(self.path, "w") as f:
-            f.write(self.code)
-        self.lsp_client.text_document_did_open(
-            DidOpenTextDocumentParams(text_document=self.text_document_item)
-        )
-        return self
-
-    def __exit__(self, _a, _b, _c):
-        self.lsp_client.text_document_did_close(
-            DidCloseTextDocumentParams(TextDocumentIdentifier(uri=self.uri))
-        )
-        os.remove(self.path)
-
-    def ask_completions(self):
-        char, line = self.char_line_of_code(self.code)
-        completion_awaitable = self.lsp_client.text_document_completion_async(
-            CompletionParams(
-                text_document=self.text_document_item,
-                position=Position(character=char, line=line),
-                context=CompletionContext(trigger_kind=CompletionTriggerKind.Invoked),
-            )
-        )
-        completions = asyncio.get_event_loop().run_until_complete(completion_awaitable)
-        if isinstance(completions, CompletionList):
-            completions = completions.items
-        resolved_completions = [
-            asyncio.get_event_loop().run_until_complete(
-                self.lsp_client.completion_item_resolve_async(completion)
-            )
-            for completion in completions
-        ]
-        return resolved_completions
-
-    def ask_signature(self):
-        char, line = self.char_line_of_code(self.code)
-        signature_awaitable = self.lsp_client.text_document_signature_help_async(
-            SignatureHelpParams(
-                text_document=self.text_document_item,
-                position=Position(character=char, line=line),
-                context=None,
-            )
-        )
-        return asyncio.get_event_loop().run_until_complete(signature_awaitable)
-
-    def char_line_of_code(self, code):
-        if code == "":
-            return 0, 0
-        lines = code.splitlines()
-        last_line_index = len(lines) - 1
-        last_line = lines[last_line_index]
-        last_char_index = len(last_line)
-        return max(last_char_index, 0), max(last_line_index, 0)
+        self.interrupt = None
