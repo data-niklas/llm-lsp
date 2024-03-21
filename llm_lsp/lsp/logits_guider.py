@@ -37,7 +37,7 @@ CompletionItem.__hash__ = custom_completion_item_hash
 class LspLogitsProcessor(LogitsProcessor):
     # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
     # This should stop Parser(fields=Parser)
-    def __init__(self, tokenizer, lsp_clients, prompt_utils, filenames, expand_size):
+    def __init__(self, tokenizer, lsp_clients, prompt_utils, filenames, expand_size, disabled):
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_clients: BaseLanguageClient = lsp_clients
         self.prompt_utils = prompt_utils
@@ -45,13 +45,14 @@ class LspLogitsProcessor(LogitsProcessor):
         self.signature_cache = {}
         self.expand_size = expand_size
         self.interrupt = None
+        self.disabled = disabled
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         # remove padding
         token_id = self.tokenizer.pad_token_id
         index = (input_ids != token_id).nonzero()[0].item()
         input_ids = input_ids[index:]
-        return self.tokenizer.decode(input_ids, skip_special_tokens=True)
+        return self.tokenizer.decode(input_ids, skip_special_tokens=False)
 
     def current_code(self, i, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
@@ -148,7 +149,7 @@ class LspLogitsProcessor(LogitsProcessor):
     def ensure_deprecated_below_non_deprecated(
         self, scores, non_deprecated, deprecated
     ):
-        minimum = 10000.0
+        minimum = 50.0
         for token in non_deprecated:
             minimum = min(minimum, scores[token].item())
         for token in deprecated:
@@ -165,7 +166,7 @@ class LspLogitsProcessor(LogitsProcessor):
             non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens
         )
         for token in non_deprecated_unique_first_tokens:
-            scores[token] -= 14
+            scores[token] = scores[token] - 14
         return scores
 
     def apply_constant_adjustments(
@@ -207,7 +208,7 @@ class LspLogitsProcessor(LogitsProcessor):
 
     def uprank_divider_after_completion(self, scores, input_ids):
         text = self.tokenizer.decode(input_ids[-1:])
-        open_token = self.tokenizer(text + "(").input_ids[-1]
+        open_token = self.tokenizer(text + "(", add_special_tokens=False).input_ids[-1]
         scores[open_token] += 14
         return scores
 
@@ -263,8 +264,8 @@ class LspLogitsProcessor(LogitsProcessor):
         return text
 
     def downrank_comments(self, current_code, scores):
-        hashtag_id = self.tokenizer(current_code + "#").input_ids[-1]
-        scores[hashtag_id] -= 100
+        hashtag_id = self.tokenizer(current_code + "#", add_special_tokens=False).input_ids[-1]
+        scores[hashtag_id] = scores[hashtag_id] - 20
         return scores
 
     def get_completions_text(self, completions):
@@ -384,7 +385,7 @@ class LspLogitsProcessor(LogitsProcessor):
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
         """Returns a 2d FloatTensor which has scores for every batch"""
-        if os.getenv("DISABLE") is not None:
+        if self.disabled:
             return scores
         for i in range(input_ids.shape[0]):
             try:

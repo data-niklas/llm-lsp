@@ -178,8 +178,7 @@ def resume(
     model._validate_generated_length(generation_config, input_ids_length, has_default_max_length)
 
     # 7. determine generation mode
-    generation_mode = model._get_generation_mode(generation_config, assistant_model)
-
+    generation_mode = generation_config.get_generation_mode(assistant_model)
     if streamer is not None and (generation_config.num_beams > 1):
         raise ValueError(
             "`streamer` cannot be used with beam search (yet!). Make sure that `num_beams` is set to 1."

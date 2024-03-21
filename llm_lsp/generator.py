@@ -13,6 +13,9 @@ from llm_lsp.interrupt_mixin import resume
 from llm_lsp.lsp.logits_guider import LspLogitsProcessor
 from llm_lsp.code_utils import remove_notes, remove_old_notes
 import torch.nn.functional as F
+import os
+import torch
+from contextlib import contextmanager
 
 DEFAULT_INTERRUPTS = [
     CompletionInterrupt(),
@@ -21,12 +24,33 @@ DEFAULT_INTERRUPTS = [
 
 class Generator:
     def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = DefaultMessageFormatter(), interrupts: List[InterruptType] = DEFAULT_INTERRUPTS):
+        self.device = model.device
         self.model = model
         self.tokenizer = tokenizer
         self.generation_config = generation_config
         self.message_formatter = message_formatter
         self.interrupts = interrupts
         self.init_interrupts()
+
+    @contextmanager
+    def device_placement(self):
+        """
+        Context Manager allowing tensor allocation on the user-specified device in framework agnostic way.
+
+        Returns:
+            Context manager
+
+        Examples:
+
+        ```python
+        # Explicitly ask for tensor allocation on CUDA device :0
+        pipe = pipeline(..., device=0)
+        with pipe.device_placement():
+            # Every framework specific tensor allocation will be done on the request device
+            output = pipe(...)
+        ```"""
+        with torch.device(self.device):
+            yield
 
     def init_interrupts(self):
         interrupt_token_ids = [interrupt.token for interrupt in self.interrupts]
@@ -45,12 +69,12 @@ class Generator:
     def decode_tokens_remove_interrupt(self, interrupt_token_ids, output_ids):
         if output_ids[-1] in interrupt_token_ids:
             tokens = output_ids[:-1]
-            return self.tokenizer.decode(tokens, skip_special_tokens=True)
+            return self.tokenizer.decode(tokens, skip_special_tokens=False)
         # Remove eos token
         output_ids = output_ids[:-1]
         if output_ids[-1] in interrupt_token_ids:
-            return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=True)
-        return self.tokenizer.decode(output_ids, skip_special_tokens=True)
+            return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=False)
+        return self.tokenizer.decode(output_ids, skip_special_tokens=False)
 
     def handle_completion_generation_result(self, lsp_processor, interrupt_token_ids, output_ids):
         interrupt_id, text = self.decode_tokens_with_maybe_interrupt(
@@ -87,7 +111,7 @@ class Generator:
     def start_generation(self, prompt, logits_guider, config):
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
 
-        prompt_input_ids = self.tokenizer(prompt, return_tensors='pt').input_ids
+        prompt_input_ids = self.tokenizer(prompt, return_tensors='pt', add_special_tokens=False).input_ids
         generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider], stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequence[0]
         last_token_ids = self.remove_padding(last_token_ids)
@@ -117,13 +141,17 @@ class Generator:
         return edited_prompt
 
     def edit_input_ids(self, interrupt, edited_prompt):
-        edited_input_ids = self.tokenizer(edited_prompt, return_tensors='pt').input_ids
+        edited_input_ids = self.tokenizer(edited_prompt, return_tensors='pt', add_special_tokens=False).input_ids
         input_ids = interrupt.input_ids
         input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
         input_ids[interrupt.interrupt_beam] = edited_input_ids
         return input_ids
 
-    async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
+    async def complete(self, code: str, repo_root: str, filename: str = "code.py", interrupts_disabled: bool=False):
+        with self.device_placement():
+            return await self._complete(code, repo_root, filename, interrupts_disabled)
+
+    async def _complete(self, code: str, repo_root: str, filename: str = "code.py", interrupts_disabled: bool=False):
         batch_size = 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
@@ -132,14 +160,14 @@ class Generator:
         prompt = prompt_util.format(code)
 
         config = self.generation_config.copy()
-        if "max_new_tokens" in config:
-            code_tokens = len(self.tokenizer(code).input_ids)
-            config["max_new_tokens"] += code_tokens
+        #if "max_new_tokens" in config:
+        #    code_tokens = len(self.tokenizer(code).input_ids)
+        #    config["max_new_tokens"] += code_tokens
         expand_size = config["num_beams"] if "num_beams" in config else 1
-        logits_guider = LspLogitsProcessor(self.tokenizer, [lsp], [prompt_util], [filename], expand_size)
+        logits_guider = LspLogitsProcessor(self.tokenizer, [lsp], [prompt_util], [filename], expand_size, interrupts_disabled)
         decoded_text = self.start_generation(prompt, logits_guider, config)
         if logits_guider.interrupt is None:
-            return prompt_util.get_whole_code(decoded_text)[len(code):]
+            return prompt_util.get_whole_code(decoded_text)[len(code)*2:]
         interrupt = logits_guider.interrupt
         edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)
         input_ids = self.edit_input_ids(interrupt, edited_prompt)
@@ -150,7 +178,7 @@ class Generator:
             if logits_guider.interrupt is None:
                 result_code = prompt_util.get_whole_code(decoded_text)
                 result_code = remove_notes(result_code)
-                result_code = result_code[len(code):]
+                result_code = result_code[len(code)*2:]
                 return result_code
             interrupt = logits_guider.interrupt
             edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)

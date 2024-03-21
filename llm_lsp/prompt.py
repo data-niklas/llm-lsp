@@ -10,24 +10,25 @@ class Prompt:
         self.message_formatter = message_formatter
 
     def init_completion_prompt(self):
+        """Create a complete prompt with special tokens and ready to use for generation"""
         try:
             messages = self.message_formatter.create_completion_messages(self.initial_text, True)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
             messages = self.message_formatter.create_completion_messages(self.initial_text, False)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         self.initial_prompt = prompt
         self.code_prefix = self.initial_text
 
     def init_generation_prompt(self):
         try:
             messages = self.message_formatter.create_generation_messages(self.initial_text, True)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, tokenizer_kwargs={"add_special_tokens": False}, add_generation_prompt=False)
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
             messages = self.message_formatter.create_generation_messages(self.initial_text, False)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False)
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, tokenizer_kwargs={"add_special_tokens": False}, add_generation_prompt=False)
         self.initial_prompt = prompt
         self.code_prefix = ""
 

@@ -17,7 +17,7 @@ from llm_lsp.constants import *
 from typing import Tuple
 import subprocess
 from llm_lsp.generator import Generator
-from transformers import AutoModelForPreTraining, AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 # https://github.com/swyddfa/lsp-devtools/blob/develop/lib/pytest-lsp/pytest_lsp/clients/visual_studio_code_v1.65.2.json
 
 import nest_asyncio
@@ -41,10 +41,11 @@ def highlight_code(code):
     return highlight(code, PythonLexer(), Terminal256Formatter())
 
 
-
 async def main(args):
     model = AutoModelForCausalLM.from_pretrained(MODEL)
+    model.half().to("cuda")
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
+    tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
     generator = Generator(model, tokenizer, generation_config)
     if args.strategy == "COMPLETE":
@@ -53,8 +54,9 @@ async def main(args):
         repo_root = args.directory
         filename = args.file
         completed_code = await generator.complete(code, repo_root, filename)
+        code += completed_code
     #code = generate_code(pipeline, tokenizer, lsp, args, code, interrupts)
-        hl = highlight_code(completed_code)
+        hl = highlight_code(code)
     #hl = code + texts[0]
         logger.info("Code:\n##########\n" + hl + "\n##########")
 
@@ -65,7 +67,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/pydantic_2.py")
+    parser.add_argument("-f", "--file", default="tests/pydantic_3.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     parser.add_argument("-s", "--strategy", default="COMPLETE")
