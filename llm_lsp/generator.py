@@ -11,6 +11,7 @@ from llm_lsp.interrupts.signature import SignatureInterrupt
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
 from llm_lsp.lsp.logits_guider import LspLogitsProcessor
+from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
 from llm_lsp.code_utils import remove_notes, remove_old_notes
 import torch.nn.functional as F
 import os
@@ -108,20 +109,20 @@ class Generator:
     def interrupt_input_ids(self):
         return [interrupt.input_id for interrupt in self.interrupts]
 
-    def start_generation(self, prompt, logits_guider, config):
+    def start_generation(self, prompt, logits_guider, boundary_logits_processor, config):
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
 
         prompt_input_ids = self.tokenizer(prompt, return_tensors='pt', add_special_tokens=False).input_ids
-        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider], stopping_criteria=[stopping_criterium], **config)
+        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider, boundary_logits_processor], stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequence[0]
         last_token_ids = self.remove_padding(last_token_ids)
         #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
         decoded_text = self.decode_tokens_remove_interrupt(self.interrupt_input_ids(), last_token_ids)
         return decoded_text
 
-    def resume_generation(self, input_ids, batch_size, logits_guider, config):
+    def resume_generation(self, input_ids, batch_size, logits_guider, boundary_logits_processor, config):
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
-        generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=[logits_guider], stopping_criteria=[stopping_criterium], **config)
+        generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=[logits_guider, boundary_logits_processor], stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequences[0]
         last_token_ids = self.remove_padding(last_token_ids)
         #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
@@ -165,7 +166,8 @@ class Generator:
         #    config["max_new_tokens"] += code_tokens
         expand_size = config["num_beams"] if "num_beams" in config else 1
         logits_guider = LspLogitsProcessor(self.tokenizer, [lsp], [prompt_util], [filename], expand_size, interrupts_disabled)
-        decoded_text = self.start_generation(prompt, logits_guider, config)
+        boundary_logits_processor = BoundaryLogitsProcessor(self.tokenizer, [".", "("])
+        decoded_text = self.start_generation(prompt, logits_guider, boundary_logits_processor, config)
         if logits_guider.interrupt is None:
             return prompt_util.get_whole_code(decoded_text)[len(code)*2:]
         interrupt = logits_guider.interrupt
@@ -174,7 +176,7 @@ class Generator:
         logits_guider.resume()
 
         while True:
-            decoded_text = self.resume_generation(input_ids, batch_size, logits_guider, config)
+            decoded_text = self.resume_generation(input_ids, batch_size, logits_guider, boundary_logits_processor, config)
             if logits_guider.interrupt is None:
                 result_code = prompt_util.get_whole_code(decoded_text)
                 result_code = remove_notes(result_code)
