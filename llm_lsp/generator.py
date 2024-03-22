@@ -82,9 +82,10 @@ class Generator:
             interrupt_token_ids, output_ids
         )
         # + 1 is for newline added in the prompt creation
-        only_generated_code = self.prompt_util.get_generated_code(text)
+        only_generated_code = self.prompt_util.get_whole_code(text)
         if interrupt_id is None:
             only_generated_code = remove_notes(only_generated_code)
+            # TODO: code_prefix for generate?
             return True, self.prompt_util.initial_code + "\n" + only_generated_code
         only_generated_code = remove_old_notes(only_generated_code)
         interrupt = [
@@ -133,7 +134,7 @@ class Generator:
         return [i for i in self.interrupts if i.input_id == interrupt.interrupt_token_id][0]
 
     def edit_generation_text_for_completion(self, decoded_text, prompt_util, interrupt):
-        generated_code = prompt_util.get_generated_code(decoded_text)
+        generated_code = prompt_util.get_whole_code(decoded_text)
         generated_code = remove_old_notes(generated_code)
 
         interrupt_type = self.find_interrupt_type(interrupt)
@@ -169,7 +170,7 @@ class Generator:
         boundary_logits_processor = BoundaryLogitsProcessor(self.tokenizer, [".", "("])
         decoded_text = self.start_generation(prompt, logits_guider, boundary_logits_processor, config)
         if logits_guider.interrupt is None:
-            return prompt_util.get_whole_code(decoded_text)[len(code)*2:]
+            return prompt_util.get_generated_code(decoded_text)
         interrupt = logits_guider.interrupt
         edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)
         input_ids = self.edit_input_ids(interrupt, edited_prompt)
@@ -178,9 +179,8 @@ class Generator:
         while True:
             decoded_text = self.resume_generation(input_ids, batch_size, logits_guider, boundary_logits_processor, config)
             if logits_guider.interrupt is None:
-                result_code = prompt_util.get_whole_code(decoded_text)
+                result_code = prompt_util.get_generated_code(decoded_text)
                 result_code = remove_notes(result_code)
-                result_code = result_code[len(code)*2:]
                 return result_code
             interrupt = logits_guider.interrupt
             edited_prompt = self.edit_generation_text_for_completion(decoded_text, prompt_util, interrupt)

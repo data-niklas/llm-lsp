@@ -60,7 +60,6 @@ class LspLogitsProcessor(LogitsProcessor):
         code = self.prompt_utils[i // self.expand_size].get_whole_code(
             generated_code_with_prompt
         )
-        code = code[len(self.prompt_utils[i // self.expand_size].initial_text):]
         return code
 
     def completion_text(self, completion) -> str:
