@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, List
 from llm_lsp.prompt import Prompt
 from llm_lsp.message_formatters import MessageFormatter
 from llm_lsp.message_formatters.default import DefaultMessageFormatter
+from llm_lsp.message_formatters.vanilla import VanillaMessageFormatter
 from pygls.lsp.client import BaseLanguageClient
 from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
 from llm_lsp.interrupts.completion import CompletionInterrupt
@@ -24,13 +25,16 @@ DEFAULT_INTERRUPTS = [
 ]
 
 class Generator:
-    def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = DefaultMessageFormatter(), interrupts: List[InterruptType] = DEFAULT_INTERRUPTS):
+    def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = None, interrupts: List[InterruptType] = DEFAULT_INTERRUPTS, disabled=False):
         self.device = model.device
         self.model = model
         self.tokenizer = tokenizer
         self.generation_config = generation_config
+        if message_formatter is None:
+            message_formatter = VanillaMessageFormatter() if disabled else DefaultMessageFormatter()
         self.message_formatter = message_formatter
         self.interrupts = interrupts
+        self.disabled = disabled
         self.init_interrupts()
 
     @contextmanager
@@ -149,11 +153,17 @@ class Generator:
         input_ids[interrupt.interrupt_beam] = edited_input_ids
         return input_ids
 
-    async def complete(self, code: str, repo_root: str, filename: str = "code.py", interrupts_disabled: bool=False):
-        with self.device_placement():
-            return await self._complete(code, repo_root, filename, interrupts_disabled)
+    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
+        return LspLogitsProcessor(self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.disabled)
 
-    async def _complete(self, code: str, repo_root: str, filename: str = "code.py", interrupts_disabled: bool=False):
+    def create_boundary_logits_processor(self):
+        return BoundaryLogitsProcessor(self.tokenizer, [".", "("], self.disabled)
+
+    async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
+        with self.device_placement():
+            return await self._complete(code, repo_root, filename)
+
+    async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
         batch_size = 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
@@ -166,8 +176,8 @@ class Generator:
         #    code_tokens = len(self.tokenizer(code).input_ids)
         #    config["max_new_tokens"] += code_tokens
         expand_size = config["num_beams"] if "num_beams" in config else 1
-        logits_guider = LspLogitsProcessor(self.tokenizer, [lsp], [prompt_util], [filename], expand_size, interrupts_disabled)
-        boundary_logits_processor = BoundaryLogitsProcessor(self.tokenizer, [".", "("])
+        logits_guider = self.create_lsp_logits_processor([lsp], [prompt_util], [filename], expand_size)
+        boundary_logits_processor = self.create_boundary_logits_processor()
         decoded_text = self.start_generation(prompt, logits_guider, boundary_logits_processor, config)
         if logits_guider.interrupt is None:
             return prompt_util.get_generated_code(decoded_text)
