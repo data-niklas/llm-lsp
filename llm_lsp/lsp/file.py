@@ -4,6 +4,29 @@ import os
 import asyncio
 from lsprotocol.types import *
 
+from pygls.protocol.json_rpc import JsonRPCProtocol, __name__ as json_rpc_name, JsonRpcInternalError
+
+import logging
+json_rpc_logger = logging.getLogger(json_rpc_name)
+def data_received(self, data: bytes):
+    try:
+        self._data_received(data)
+    except Exception as error:
+        asyncio.create_task(shutdown(asyncio.get_running_loop()))
+        json_rpc_logger.exception("Error receiving data", exc_info=True)
+        self._server._report_server_error(error, JsonRpcInternalError)
+
+JsonRPCProtocol.data_received = data_received
+
+async def shutdown(loop):
+    """Cleanup tasks tied to the service's shutdown."""
+    tasks = [t for t in asyncio.all_tasks() if t is not
+             asyncio.current_task()]
+
+    [task.cancel() for task in tasks]
+
+    await asyncio.gather(*tasks, return_exceptions=True)
+    loop.stop()
 
 class LspCodeFile:
     def __init__(self, file, code, lsp_client):
@@ -32,18 +55,7 @@ class LspCodeFile:
         )
         os.remove(self.path)
 
-    def ask_completions(self):
-        char, line = self.char_line_of_code(self.code)
-        completion_awaitable = self.lsp_client.text_document_completion_async(
-            CompletionParams(
-                text_document=self.text_document_item,
-                position=Position(character=char, line=line),
-                context=CompletionContext(trigger_kind=CompletionTriggerKind.Invoked),
-            )
-        )
-        completions = asyncio.get_event_loop().run_until_complete(completion_awaitable)
-        if isinstance(completions, CompletionList):
-            completions = completions.items
+    def resolve_completions(self, completions):
         if len(completions) > 0:
             resolved_completions = asyncio.get_event_loop().run_until_complete(
                 asyncio.gather(
@@ -56,6 +68,20 @@ class LspCodeFile:
         else:
             resolved_completions = []
         return resolved_completions
+
+    def ask_completions(self):
+        char, line = self.char_line_of_code(self.code)
+        completion_awaitable = self.lsp_client.text_document_completion_async(
+            CompletionParams(
+                text_document=self.text_document_item,
+                position=Position(character=char, line=line),
+                context=CompletionContext(trigger_kind=CompletionTriggerKind.Invoked),
+            )
+        )
+        completions = asyncio.get_event_loop().run_until_complete(completion_awaitable)
+        if isinstance(completions, CompletionList):
+            completions = completions.items
+        return completions
 
     def ask_signature(self):
         char, line = self.char_line_of_code(self.code)

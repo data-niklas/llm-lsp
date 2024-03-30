@@ -7,7 +7,8 @@ class VanillaMessageFormatter(MessageFormatter):
         self, initial_code: str, system_prompt_enabled: bool
     ) -> List[Dict[str, Any]]:
         system_prompt = "Return only the completion."
-        user_prompt = f"Complete the following Python code block. Return only code."
+        user_prompt = f"Complete the following Python code block. Return only code.\n```py\n{initial_code}\n```"
+
         if system_prompt_enabled:
             return [
                 {"role": "system", "content": system_prompt},

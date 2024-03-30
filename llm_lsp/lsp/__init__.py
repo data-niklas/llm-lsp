@@ -14,8 +14,6 @@ async def create_lsp_for_language(language: str, directory: str):
         return await create_python_lsp(directory)
 
 async def create_python_lsp(directory):
-    #lsp_client = LspClient()
-    #await lsp_client.start("pylsp", [])
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
     await lsp.start_io("pylsp")
     logger.info("Now initializing")

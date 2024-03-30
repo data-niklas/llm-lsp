@@ -308,12 +308,13 @@ class LspLogitsProcessor(LogitsProcessor):
             filename, current_code, self.lsp_clients[i // self.expand_size]
         ) as lsp_code_file:
             if self.should_complete(current_code):
-                resolved_completions = lsp_code_file.ask_completions()
+                completions = lsp_code_file.ask_completions()
+                completions = lsp_code_file.resolve_completions(completions)
             else:
-                resolved_completions = []
+                completions = []
             trigger_phrase = re.search(r"[A-Za-z_]*$", current_code).group(0)
             signature_help = lsp_code_file.ask_signature()
-            self.increase_signature_cache(signature_help, resolved_completions)
+            self.increase_signature_cache(signature_help, completions)
             signature_help.signatures = self.filter_builtin_signatures(
                 signature_help.signatures
             )
@@ -323,7 +324,7 @@ class LspLogitsProcessor(LogitsProcessor):
                     self.filter_completions_by_case(
                         trigger_phrase,
                         self.filter_completions_by_kind(
-                            self.filter_builtin_completions(resolved_completions)
+                            self.filter_builtin_completions(completions)
                         ),
                     ),
                 )

@@ -118,7 +118,8 @@ class Generator:
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
 
         prompt_input_ids = self.tokenizer(prompt, return_tensors='pt', add_special_tokens=False).input_ids
-        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=[logits_guider, boundary_logits_processor], stopping_criteria=[stopping_criterium], **config)
+        logits_processor = [logits_guider, boundary_logits_processor]
+        generated_sequence = self.model.generate(prompt_input_ids, logits_processor=logits_processor, stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequence[0]
         last_token_ids = self.remove_padding(last_token_ids)
         #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
@@ -127,7 +128,8 @@ class Generator:
 
     def resume_generation(self, input_ids, batch_size, logits_guider, boundary_logits_processor, config):
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
-        generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=[logits_guider, boundary_logits_processor], stopping_criteria=[stopping_criterium], **config)
+        logits_processor = [logits_guider, boundary_logits_processor]
+        generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=logits_processor, stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequences[0]
         last_token_ids = self.remove_padding(last_token_ids)
         #last_token_ids = last_token_ids[prompt_input_ids.shape[-1]:]
@@ -172,9 +174,9 @@ class Generator:
         prompt = prompt_util.format(code)
 
         config = self.generation_config.copy()
-        #if "max_new_tokens" in config:
-        #    code_tokens = len(self.tokenizer(code).input_ids)
-        #    config["max_new_tokens"] += code_tokens
+        if "max_new_tokens" in config:
+            code_tokens = len(self.tokenizer(code).input_ids)
+            config["max_new_tokens"] += code_tokens
         expand_size = config["num_beams"] if "num_beams" in config else 1
         logits_guider = self.create_lsp_logits_processor([lsp], [prompt_util], [filename], expand_size)
         boundary_logits_processor = self.create_boundary_logits_processor()
