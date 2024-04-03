@@ -24,6 +24,8 @@ DEFAULT_INTERRUPTS = [
     SignatureInterrupt()
 ]
 
+PAD_TOKEN = "[PAD]"
+
 class Generator:
     def __init__(self, model: GenerationMixin, tokenizer: AutoTokenizer, generation_config: Dict[str, Any], message_formatter: MessageFormatter = None, interrupts: List[InterruptType] = DEFAULT_INTERRUPTS, disabled=False):
         self.device = model.device
@@ -35,7 +37,7 @@ class Generator:
         self.message_formatter = message_formatter
         self.interrupts = interrupts
         self.disabled = disabled
-        self.init_interrupts()
+        self.add_special_tokens()
 
     @contextmanager
     def device_placement(self):
@@ -57,11 +59,13 @@ class Generator:
         with torch.device(self.device):
             yield
 
-    def init_interrupts(self):
+    def add_special_tokens(self):
         interrupt_token_ids = [interrupt.token for interrupt in self.interrupts]
+        additional_special_tokens = interrupt_token_ids + [PAD_TOKEN]
         self.tokenizer.add_special_tokens({
-            'additional_special_tokens': interrupt_token_ids
+            'additional_special_tokens': additional_special_tokens
         })
+        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))  
         for interrupt in self.interrupts:
             interrupt.init_input_id(self.tokenizer)
@@ -118,7 +122,7 @@ class Generator:
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
 
         prompt_input_ids = self.tokenizer(prompt, return_tensors='pt', add_special_tokens=False).input_ids
-        logits_processor = [logits_guider, boundary_logits_processor]
+        logits_processor = [logits_guider]#, boundary_logits_processor]
         generated_sequence = self.model.generate(prompt_input_ids, logits_processor=logits_processor, stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequence[0]
         last_token_ids = self.remove_padding(last_token_ids)
@@ -128,7 +132,7 @@ class Generator:
 
     def resume_generation(self, input_ids, batch_size, logits_guider, boundary_logits_processor, config):
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
-        logits_processor = [logits_guider, boundary_logits_processor]
+        logits_processor = [logits_guider]#, boundary_logits_processor]
         generated_sequences = resume(self.model, input_ids, batch_size, logits_processor=logits_processor, stopping_criteria=[stopping_criterium], **config)
         last_token_ids = generated_sequences[0]
         last_token_ids = self.remove_padding(last_token_ids)

@@ -20,6 +20,8 @@ from llm_lsp.lsp.file import LspCodeFile
 from dataclasses import dataclass
 from typing import Any
 
+INTERRUPT_LOGITS_SCORE = 100
+RANK_DELTA = 3.0
 
 @dataclass
 class InterruptGeneration(BaseException):
@@ -101,7 +103,7 @@ class LspLogitsProcessor(LogitsProcessor):
         return [
             completion
             for completion in completions
-            if not self.completion_text(completion).startswith("__")
+            if not self.completion_text(completion).startswith("_")
             or self.completion_text(completion) in ["__getitem__", "__setitem__"]
         ]
 
@@ -152,29 +154,17 @@ class LspLogitsProcessor(LogitsProcessor):
         for token in non_deprecated:
             minimum = min(minimum, scores[token].item())
         for token in deprecated:
-            scores[token] = min(minimum - 7, scores[token].item())
+            scores[token] = min(minimum - RANK_DELTA, scores[token].item())
         return scores
 
-    def downrank_completed_items(
-        self,
-        scores,
-        non_deprecated_index_after_last_overlapping_token,
-        non_deprecated_tokens,
-    ):
-        non_deprecated_unique_first_tokens = self.get_unique_first_tokens(
-            non_deprecated_index_after_last_overlapping_token, non_deprecated_tokens
-        )
-        for token in non_deprecated_unique_first_tokens:
-            scores[token] = scores[token] - 14
-        return scores
 
     def apply_constant_adjustments(
         self, scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens
     ):
         for non_deprecated_token in non_deprecated_unique_first_tokens:
-            scores[non_deprecated_token] += 7.0
+            scores[non_deprecated_token] += RANK_DELTA
         for deprecated_token in deprecated_unique_first_tokens:
-            scores[deprecated_token] -= 7.0
+            scores[deprecated_token] -= RANK_DELTA
         return scores
 
     def filter_completions_by_postfix(self, trigger_phrase: str, completions):
@@ -205,11 +195,6 @@ class LspLogitsProcessor(LogitsProcessor):
 
         return [signature for signature in signatures if not is_builtin(signature)]
 
-    def uprank_divider_after_completion(self, scores, input_ids):
-        text = self.tokenizer.decode(input_ids[-1:])
-        open_token = self.tokenizer(text + "(", add_special_tokens=False).input_ids[-1]
-        scores[open_token] += 14
-        return scores
 
     def check_deprecation_documentation_included(
         self, current_code: str, deprecated_completions
@@ -258,7 +243,7 @@ class LspLogitsProcessor(LogitsProcessor):
 
     def get_completion_text(self, completion):
         text = self.completion_text(completion)
-        if completion.kind in [CompletionItemKind.Method, CompletionItemKind.Class]:
+        if completion.kind in [CompletionItemKind.Function, CompletionItemKind.Method, CompletionItemKind.Class]:
             text += "("
         return text
 
@@ -391,7 +376,7 @@ class LspLogitsProcessor(LogitsProcessor):
             try:
                 scores[i] = self.scores_for_batch(i, input_ids[i], scores[i])
             except InterruptGeneration as ig:
-                scores[i][ig.interrupt_token_id] = 100
+                scores[i][ig.interrupt_token_id] = INTERRUPT_LOGITS_SCORE
                 self.interrupt = Interrupt(
                     input_ids=input_ids,
                     interrupt_beam=i,

@@ -6,8 +6,8 @@ class VanillaMessageFormatter(MessageFormatter):
     def create_completion_messages(
         self, initial_code: str, system_prompt_enabled: bool
     ) -> List[Dict[str, Any]]:
-        system_prompt = "Return only the completion."
-        user_prompt = f"Complete the following Python code block. Return only code.\n```py\n{initial_code}\n```"
+        system_prompt = "Return only the completion of the given function. Generate readable and simple code."
+        user_prompt = f"Complete the following Python function. Return only code."
 
         if system_prompt_enabled:
             return [
