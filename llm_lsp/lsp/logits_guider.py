@@ -314,6 +314,7 @@ class LspLogitsProcessor(LogitsProcessor):
                     ),
                 )
             )
+            # TODO: trigger on selection / Selection INTERRUPT with the SINGULAR completion item
             (
                 non_deprecated_completions,
                 deprecated_completions,

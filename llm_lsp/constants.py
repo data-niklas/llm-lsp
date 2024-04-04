@@ -1,6 +1,6 @@
 MODEL = "codellama/CodeLlama-7b-Instruct-hf"
-MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
-MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
+#MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
+#MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 #MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
@@ -15,7 +15,8 @@ GLOBAL_CONFIGURATION = {
     #"return_full_text": False,
     "temperature": 0.7,
     "max_new_tokens": 2048,
-    "repetition_penalty": 1.18
+    "repetition_penalty": 1.18,
+    #"no_repeat_ngram_size": 3
 }
 COMPLETION_INTERRUPT_TOKEN = '[COMPLETION_INTERRUPT]'
 SIGNATURE_INTERRUPT_TOKEN = '[SIGNATURE_INTERRUPT]'
