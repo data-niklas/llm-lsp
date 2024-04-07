@@ -6,7 +6,10 @@
 __pycache__/
 *.py[cod]
 *$py.class
-
+dataset
+.vscode
+constructed_code
+lsp_issue
 # C extensions
 *.so
 

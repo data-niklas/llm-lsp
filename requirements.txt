@@ -17,8 +17,4 @@ nest_asyncio
 # python client for lsp
 pygls @ git+https://github.com/openlawlibrary/pygls.git
 
-pydantic
-tsv2py
-polars
-
-evalplus
+marisa_trie
