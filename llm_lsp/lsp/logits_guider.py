@@ -14,7 +14,8 @@ import re
 
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
-from llm_lsp.interrupts.completion import is_deprecated
+from llm_lsp.interrupts.deprecation import is_deprecated, TOKEN_ID as DEPRECATION_TOKEN_ID
+from llm_lsp.interrupts.signature import TOKEN_ID as SIGNATURE_TOKEN_ID
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.lsp.file import LspCodeFile
 from dataclasses import dataclass
@@ -322,11 +323,11 @@ class LspLogitsProcessor(LogitsProcessor):
             if not self.check_deprecation_documentation_included(
                 current_code, deprecated_completions
             ):
-                self.trigger_interrupt(deprecated_completions, "[COMPLETION_INTERRUPT]")
+                self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
             if not self.check_signature_documentation_included(
                 current_code, signature_help
             ):
-                self.trigger_interrupt(signature_help, "[SIGNATURE_INTERRUPT]")
+                self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
                 # TODO: do not interrupt on stdlib stuff
 
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
@@ -380,7 +381,6 @@ class LspLogitsProcessor(LogitsProcessor):
                 scores[i][ig.interrupt_token_id] = INTERRUPT_LOGITS_SCORE
                 self.interrupt = Interrupt(
                     input_ids=input_ids,
-                    interrupt_beam=i,
                     interrupt_context=ig.context,
                     interrupt_token_id=ig.interrupt_token_id,
                 )

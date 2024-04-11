@@ -18,8 +18,6 @@ from typing import Tuple
 import subprocess
 from llm_lsp.generator import Generator
 from transformers import AutoTokenizer, AutoModelForCausalLM
-# https://github.com/swyddfa/lsp-devtools/blob/develop/lib/pytest-lsp/pytest_lsp/clients/visual_studio_code_v1.65.2.json
-
 import nest_asyncio
 
 nest_asyncio.apply()

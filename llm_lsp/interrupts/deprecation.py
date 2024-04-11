@@ -1,12 +1,14 @@
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
-from llm_lsp.code_utils import determine_indentation
+from llm_lsp.code_utils import CodeUtil
 from typing import Any
 import importlib
 import sys
 import json
 from typing import List
 from functools import lru_cache
+from llm_lsp.commentor import Comment, Lifetime
+
 
 def module_name_and_variable_parts(item):
     parts: List[str] = item.split(".")
@@ -21,6 +23,7 @@ def module_name_and_variable_parts(item):
     module_name = ".".join(module_name_parts)
     return module_name, variable_parts
 
+
 def get_deprecation_message(item):
     module_name, variable_parts = module_name_and_variable_parts(item)
     variable_parts.append("__deprecated__")
@@ -31,6 +34,7 @@ def get_deprecation_message(item):
             return None
         variable = getattr(variable, variable_part)
     return variable
+
 
 @lru_cache
 def is_deprecated(item):
@@ -49,35 +53,23 @@ def is_deprecated(item):
         variable = getattr(variable, variable_part)
     return hasattr(variable, "__deprecated__")
 
+TOKEN_ID = "[DEPRECATION_INTERRUPT]"
+DEPRECATION_COMMENT_TYPE = "deprecation"
 
-class CompletionInterrupt(InterruptType):
+
+class DeprecationInterrupt(InterruptType):
     def __init__(self):
-        super().__init__("[COMPLETION_INTERRUPT]")
+        super().__init__(TOKEN_ID)
 
-
-    def add_deprecation_notes(self, code: str, completion_items):
-        try:
-            first_lines, last_line = code.rsplit("\n", 1)
-        except ValueError:
-            first_lines, last_line = "", code
-
-        indentation = determine_indentation(last_line)
-        comments = [
-            indentation
-            + "# Deprecation note: "
+    def create_comment(self, context: Any) -> Comment:
+        notes = [
+            "Deprecation note: "
             + get_deprecation_message(
                 completion_item.detail + "." + completion_item.insert_text
             ).strip()
-            for completion_item in completion_items
+            for completion_item in context
         ]
-        comments_text = "\n".join(comments)
-        return first_lines + "\n" + comments_text + "\n" + last_line
-
-
-    def edit_generated_code_for_completion(self, generated_code: str, context: Any) -> str:
-        generated_code_with_notes = self.add_deprecation_notes(generated_code, context)
-        return generated_code_with_notes
-
+        return Comment(lifetime=Lifetime.EPHEMERAL, comment="\n".join(notes), interrupt=DEPRECATION_COMMENT_TYPE)
 
 
 if __name__ == "__main__":

@@ -1,19 +1,59 @@
-from transformers import GenerationMixin, GenerationConfig, LogitsProcessorList, StoppingCriteriaList
-from transformers.generation.utils import GenerateOutput, BeamSearchScorer, GenerationMode, NEED_SETUP_CACHE_CLASSES_MAPPING
+from transformers import (
+    GenerationMixin,
+    GenerationConfig,
+    LogitsProcessorList,
+    StoppingCriteriaList,
+)
+from transformers.generation.utils import (
+    GenerateOutput,
+    BeamSearchScorer,
+    GenerationMode,
+    NEED_SETUP_CACHE_CLASSES_MAPPING,
+)
 import torch
 from typing import Optional, Union, List, Callable
 from transformers.utils import logging
 import warnings
+
 logger = logging.get_logger(__name__)
 from transformers.integrations import is_deepspeed_zero3_enabled
 import copy
 import inspect
 
+
+class BeamIndexStoringSearchScores(BeamSearchScorer):
+    def finalize(
+        self,
+        input_ids: torch.LongTensor,
+        final_beam_scores: torch.FloatTensor,
+        final_beam_tokens: torch.LongTensor,
+        final_beam_indices: torch.LongTensor,
+        max_length: int,
+        pad_token_id: Optional[int] = None,
+        eos_token_id: Optional[Union[int, List[int]]] = None,
+        beam_indices: Optional[torch.LongTensor] = None,
+        decoder_prompt_len: Optional[int] = 0,
+    ):
+        self.input_ids = input_ids # NOTE: to be read later on to track beam indices
+        self.beam_indices = beam_indices # NOTE: to be read later on to track changes
+        return super().finalize(
+            input_ids,
+            final_beam_scores,
+            final_beam_tokens,
+            final_beam_indices,
+            max_length,
+            pad_token_id,
+            eos_token_id,
+            beam_indices,
+            decoder_prompt_len,
+        )
+
+
 @torch.no_grad()
 def resume(
     model,
     inputs: Optional[torch.Tensor] = None,
-    batch_size = 1,
+    batch_size=1,
     generation_config: Optional[GenerationConfig] = None,
     logits_processor: Optional[LogitsProcessorList] = None,
     stopping_criteria: Optional[StoppingCriteriaList] = None,
@@ -44,7 +84,8 @@ def resume(
         # 3) the user must have set generation parameters in the model config.
         if (
             model.generation_config._from_model_config
-            and model.generation_config._original_object_hash == hash(model.generation_config)
+            and model.generation_config._original_object_hash
+            == hash(model.generation_config)
             and model.config._has_non_default_generation_parameters()
         ):
             new_generation_config = GenerationConfig.from_model_config(model.config)
@@ -59,14 +100,23 @@ def resume(
         generation_config = model.generation_config
 
     generation_config = copy.deepcopy(generation_config)
-    model_kwargs = generation_config.update(**kwargs)  # All unused kwargs must be model kwargs
+    model_kwargs = generation_config.update(
+        **kwargs
+    )  # All unused kwargs must be model kwargs
     model._validate_model_kwargs(model_kwargs.copy())
 
     # 2. Set generation parameters if not already defined
-    logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-    stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
+    logits_processor = (
+        logits_processor if logits_processor is not None else LogitsProcessorList()
+    )
+    stopping_criteria = (
+        stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
+    )
 
-    if generation_config.pad_token_id is None and generation_config.eos_token_id is not None:
+    if (
+        generation_config.pad_token_id is None
+        and generation_config.eos_token_id is not None
+    ):
         if model_kwargs.get("attention_mask", None) is None:
             logger.warning(
                 "The attention mask and the pad token id were not set. As a consequence, you may observe "
@@ -75,7 +125,9 @@ def resume(
         eos_token_id = generation_config.eos_token_id
         if isinstance(eos_token_id, list):
             eos_token_id = eos_token_id[0]
-        logger.warning(f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation.")
+        logger.warning(
+            f"Setting `pad_token_id` to `eos_token_id`:{eos_token_id} for open-end generation."
+        )
         generation_config.pad_token_id = eos_token_id
 
     # 3. Define model inputs
@@ -97,12 +149,20 @@ def resume(
     else:
         model_kwargs["use_cache"] = generation_config.use_cache
 
-    accepts_attention_mask = "attention_mask" in set(inspect.signature(model.forward).parameters.keys())
+    accepts_attention_mask = "attention_mask" in set(
+        inspect.signature(model.forward).parameters.keys()
+    )
     requires_attention_mask = "encoder_outputs" not in model_kwargs
 
-    if model_kwargs.get("attention_mask", None) is None and requires_attention_mask and accepts_attention_mask:
+    if (
+        model_kwargs.get("attention_mask", None) is None
+        and requires_attention_mask
+        and accepts_attention_mask
+    ):
         model_kwargs["attention_mask"] = model._prepare_attention_mask_for_generation(
-            inputs_tensor, generation_config.pad_token_id, generation_config.eos_token_id
+            inputs_tensor,
+            generation_config.pad_token_id,
+            generation_config.eos_token_id,
         )
 
     # decoder-only models should use left-padding for generation
@@ -137,14 +197,20 @@ def resume(
             device=inputs_tensor.device,
         )
     else:
-        input_ids = inputs_tensor if model_input_name == "input_ids" else model_kwargs.pop("input_ids")
+        input_ids = (
+            inputs_tensor
+            if model_input_name == "input_ids"
+            else model_kwargs.pop("input_ids")
+        )
 
     if streamer is not None:
         streamer.put(input_ids.cpu())
 
     # 6. Prepare `max_length` depending on other stopping criteria.
     input_ids_length = input_ids.shape[-1]
-    has_default_max_length = kwargs.get("max_length") is None and generation_config.max_length is not None
+    has_default_max_length = (
+        kwargs.get("max_length") is None and generation_config.max_length is not None
+    )
     if generation_config.max_new_tokens is not None:
         if not has_default_max_length and generation_config.max_length is not None:
             logger.warning(
@@ -153,7 +219,9 @@ def resume(
                 "Please refer to the documentation for more information. "
                 "(https://huggingface.co/docs/transformers/main/en/main_classes/text_generation)"
             )
-        generation_config.max_length = generation_config.max_new_tokens + input_ids_length
+        generation_config.max_length = (
+            generation_config.max_new_tokens + input_ids_length
+        )
 
     # otherwise the total length [inputs-embeds-len + new-tokens-len] will go beyond indicated `max_length``
     elif (
@@ -164,18 +232,27 @@ def resume(
         generation_config.max_length -= inputs_tensor.shape[1]
 
     # if we don't pass `past_key_values` and a cache_implementation is specified
-    if generation_config.cache_implementation in NEED_SETUP_CACHE_CLASSES_MAPPING and not model_kwargs.get(
-        "past_key_values", False
+    if (
+        generation_config.cache_implementation in NEED_SETUP_CACHE_CLASSES_MAPPING
+        and not model_kwargs.get("past_key_values", False)
     ):
-        cache_cls = NEED_SETUP_CACHE_CLASSES_MAPPING[generation_config.cache_implementation]
+        cache_cls = NEED_SETUP_CACHE_CLASSES_MAPPING[
+            generation_config.cache_implementation
+        ]
         if not callable(getattr(model, "_setup_cache", None)):
             raise ValueError(
                 "The `generation_config` defines a `cache_implementation` that is not compatible with this model."
                 " Make sure it has a `_setup_cache` function."
             )
-        model._setup_cache(cache_cls, max_batch_size=batch_size, max_cache_len=generation_config.max_length)
+        model._setup_cache(
+            cache_cls,
+            max_batch_size=batch_size,
+            max_cache_len=generation_config.max_length,
+        )
 
-    model._validate_generated_length(generation_config, input_ids_length, has_default_max_length)
+    model._validate_generated_length(
+        generation_config, input_ids_length, has_default_max_length
+    )
 
     # 7. determine generation mode
     generation_mode = generation_config.get_generation_mode(assistant_model)
@@ -239,7 +316,11 @@ def resume(
             candidate_generator=candidate_generator,
             do_sample=generation_config.do_sample,
             logits_processor=prepared_logits_processor,
-            logits_warper=model._get_logits_warper(generation_config) if generation_config.do_sample else None,
+            logits_warper=(
+                model._get_logits_warper(generation_config)
+                if generation_config.do_sample
+                else None
+            ),
             stopping_criteria=prepared_stopping_criteria,
             pad_token_id=generation_config.pad_token_id,
             eos_token_id=generation_config.eos_token_id,
@@ -292,12 +373,12 @@ def resume(
         logits_warper = model._get_logits_warper(generation_config)
 
         # 12. expand input_ids with `num_return_sequences` additional sequences per batch
-        input_ids, model_kwargs = model._expand_inputs_for_generation(
-            input_ids=input_ids,
-            expand_size=generation_config.num_return_sequences,
-            is_encoder_decoder=model.config.is_encoder_decoder,
-            **model_kwargs,
-        )
+        # input_ids, model_kwargs = model._expand_inputs_for_generation(
+        #     input_ids=input_ids,
+        #     expand_size=generation_config.num_return_sequences,
+        #     is_encoder_decoder=model.config.is_encoder_decoder,
+        #     **model_kwargs,
+        # )
 
         # 13. run sample
         return model.sample(
@@ -317,7 +398,7 @@ def resume(
 
     elif generation_mode == GenerationMode.BEAM_SEARCH:
         # 11. prepare beam search scorer
-        beam_scorer = BeamSearchScorer(
+        beam_scorer = BeamIndexStoringSearchScores(  # NOTE: This class has been changed to allow reading the selected beams and tracing changes
             batch_size=batch_size,
             num_beams=generation_config.num_beams,
             device=inputs_tensor.device,
@@ -327,14 +408,14 @@ def resume(
             max_length=generation_config.max_length,
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
-        #input_ids, model_kwargs = model._expand_inputs_for_generation(
+        # input_ids, model_kwargs = model._expand_inputs_for_generation(
         #    input_ids=input_ids,
         #    expand_size=generation_config.num_beams,
         #    is_encoder_decoder=model.config.is_encoder_decoder,
         #    **model_kwargs,
-        #)
+        # )
         # 13. run beam search
-        return model.beam_search(
+        result = model.beam_search(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -348,13 +429,18 @@ def resume(
             sequential=generation_config.low_memory,
             **model_kwargs,
         )
+        # NOTE: changed to inject selected beam indices
+        assert generation_config.return_dict_in_generate
+        result["selected_beam_indices"] = beam_scorer.beam_indices
+        result["beam_input_ids"] = beam_scorer.input_ids
+        return result
 
     elif generation_mode == GenerationMode.BEAM_SAMPLE:
         # 11. prepare logits warper
         logits_warper = model._get_logits_warper(generation_config)
 
         # 12. prepare beam search scorer
-        beam_scorer = BeamSearchScorer(
+        beam_scorer = BeamIndexStoringSearchScores(  # NOTE: This class has been changed to allow reading the selected beams and tracing changes
             batch_size=batch_size,
             num_beams=generation_config.num_beams,
             device=inputs_tensor.device,
@@ -365,15 +451,15 @@ def resume(
         )
 
         # 13. interleave input_ids with `num_beams` additional sequences per batch
-        #input_ids, model_kwargs = model._expand_inputs_for_generation(
+        # input_ids, model_kwargs = model._expand_inputs_for_generation(
         #    input_ids=input_ids,
         #    expand_size=generation_config.num_beams,
         #    is_encoder_decoder=model.config.is_encoder_decoder,
         #    **model_kwargs,
-        #)
+        # )
 
         # 14. run beam sample
-        return model.beam_sample(
+        result = model.beam_sample(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -387,10 +473,15 @@ def resume(
             synced_gpus=synced_gpus,
             **model_kwargs,
         )
+        # NOTE: changed to inject selected beam indices
+        assert generation_config.return_dict_in_generate
+        result["selected_beam_indices"] = beam_scorer.beam_indices
+        result["beam_input_ids"] = beam_scorer.input_ids
+        return result
 
     elif generation_mode == GenerationMode.GROUP_BEAM_SEARCH:
         # 11. prepare beam search scorer
-        beam_scorer = BeamSearchScorer(
+        beam_scorer = BeamIndexStoringSearchScores(  # NOTE: This class has been changed to allow reading the selected beams and tracing changes
             batch_size=batch_size,
             num_beams=generation_config.num_beams,
             device=inputs_tensor.device,
@@ -401,14 +492,14 @@ def resume(
             max_length=generation_config.max_length,
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
-        #input_ids, model_kwargs = model._expand_inputs_for_generation(
+        # input_ids, model_kwargs = model._expand_inputs_for_generation(
         #    input_ids=input_ids,
         #    expand_size=generation_config.num_beams,
         #    is_encoder_decoder=model.config.is_encoder_decoder,
         #    **model_kwargs,
-        #)
+        # )
         # 13. run beam search
-        return model.group_beam_search(
+        result = model.group_beam_search(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -421,8 +512,16 @@ def resume(
             synced_gpus=synced_gpus,
             **model_kwargs,
         )
+        # NOTE: changed to inject selected beam indices
+        assert generation_config.return_dict_in_generate
+        result["selected_beam_indices"] = beam_scorer.beam_indices
+        result["beam_input_ids"] = beam_scorer.input_ids
+        return result
 
     elif generation_mode == GenerationMode.CONSTRAINED_BEAM_SEARCH:
+        assert (
+            False
+        ), "This feature is not supported yet by LLM LSP"  # NOTE: this has been added
         final_constraints = []
         if generation_config.constraints is not None:
             final_constraints = generation_config.constraints
@@ -448,7 +547,10 @@ def resume(
                     if any(not isinstance(token_ids, list) for token_ids in word_ids):
                         typeerror()
                     if any(
-                        any((not isinstance(token_id, int) or token_id < 0) for token_id in token_ids)
+                        any(
+                            (not isinstance(token_id, int) or token_id < 0)
+                            for token_id in token_ids
+                        )
                         for token_ids in word_ids
                     ):
                         typeerror()
@@ -457,7 +559,10 @@ def resume(
                 else:
                     if not isinstance(word_ids, list) or len(word_ids) == 0:
                         typeerror()
-                    if any((not isinstance(token_id, int) or token_id < 0) for token_id in word_ids):
+                    if any(
+                        (not isinstance(token_id, int) or token_id < 0)
+                        for token_id in word_ids
+                    ):
                         typeerror()
 
                     constraint = PhrasalConstraint(word_ids)
@@ -475,12 +580,12 @@ def resume(
             max_length=generation_config.max_length,
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
-        #input_ids, model_kwargs = model._expand_inputs_for_generation(
+        # input_ids, model_kwargs = model._expand_inputs_for_generation(
         #    input_ids=input_ids,
         #    expand_size=generation_config.num_beams,
         #    is_encoder_decoder=model.config.is_encoder_decoder,
         #    **model_kwargs,
-        #)
+        # )
         # 13. run beam search
         return model.constrained_beam_search(
             input_ids,

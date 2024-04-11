@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from llm_lsp.prompt import Prompt
 from transformers import StoppingCriteria
 from torch import Tensor
+from llm_lsp.commentor import Comment
 
 class InterruptStoppingCriteria(StoppingCriteria):
     def __init__(self, interrupt_token_ids):
@@ -20,7 +21,6 @@ class InterruptStoppingCriteria(StoppingCriteria):
 class Interrupt:
     # Tensor of (return_count * beams * batched_items_count) x currently_generated_tokens
     input_ids: Tensor
-    interrupt_beam: int  
     interrupt_context: Any
     interrupt_token_id: int
 
@@ -33,7 +33,7 @@ class InterruptType(ABC):
         self.input_id = tokenizer.convert_tokens_to_ids(self.token)
 
     @abstractmethod
-    def edit_generated_code_for_completion(self, generated_code: str, context: Any) -> str:
+    def create_comment(self, context: Any) -> Comment:
         pass
 
 

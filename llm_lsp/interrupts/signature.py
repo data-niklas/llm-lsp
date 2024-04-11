@@ -1,34 +1,25 @@
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
-from llm_lsp.code_utils import determine_indentation
+from llm_lsp.commentor import Comment, Lifetime
 from typing import Any
+
+TOKEN_ID = "[SIGNATURE_INTERRUPT]"
+SIGNATURE_COMMENT_TYPE = "signature"
 
 class SignatureInterrupt(InterruptType):
     def __init__(self, maximum_documentation_length = 500):
-        super().__init__("[SIGNATURE_INTERRUPT]")
+        super().__init__(TOKEN_ID)
         self.maximum_documentation_length = maximum_documentation_length
 
-    def add_signature_notes(self, code: str, signature_help):
-        try:
-            first_lines, last_line = code.rsplit("\n", 1)
-        except ValueError:
-            first_lines, last_line = "", code
-        indentation = determine_indentation(last_line)
-
+    def create_comment(self, signature_help: Any) -> Comment:
         active_signature = signature_help.signatures[signature_help.active_signature]
         documentation = active_signature.documentation.value
-        comments_text = indentation + "# Signature note: " + active_signature.label.strip()
+        
+        comment = "Signature note: " + active_signature.label.strip()
         if len(documentation) > 0 and len(documentation) < self.maximum_documentation_length:
-            comments_text += (
-                "\n"
-                + indentation
-                + '# Signature note: Documentation is: """'
-                + documentation.replace("\n", "\n" + indentation + "# Signature note: ")
+            comment += (
+                '\nSignature note: Documentation is: """'
+                + documentation.replace("\n", "\nSignature note: ")
                 + '"""'
             )
-        return first_lines + "\n" + comments_text + "\n" + last_line
-
-
-    def edit_generated_code_for_completion(self, generated_code: str, context: Any) -> str:
-        generated_code_with_notes = self.add_signature_notes(generated_code, context)
-        return generated_code_with_notes
+        return Comment(lifetime=Lifetime.EPHEMERAL, comment=comment, interrupt=SIGNATURE_COMMENT_TYPE)
