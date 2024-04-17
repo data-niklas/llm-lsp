@@ -333,7 +333,7 @@ def resume(
         )
     if generation_mode == GenerationMode.GREEDY_SEARCH:
         # 11. run greedy search
-        return model.greedy_search(
+        return model._greedy_search(
             input_ids,
             logits_processor=prepared_logits_processor,
             stopping_criteria=prepared_stopping_criteria,
@@ -351,7 +351,7 @@ def resume(
         if not model_kwargs["use_cache"]:
             raise ValueError("Contrastive search requires `use_cache=True`")
 
-        return model.contrastive_search(
+        return model._contrastive_search(
             input_ids,
             top_k=generation_config.top_k,
             penalty_alpha=generation_config.penalty_alpha,
@@ -381,7 +381,7 @@ def resume(
         # )
 
         # 13. run sample
-        return model.sample(
+        return model._sample(
             input_ids,
             logits_processor=prepared_logits_processor,
             logits_warper=logits_warper,
@@ -415,7 +415,7 @@ def resume(
         #    **model_kwargs,
         # )
         # 13. run beam search
-        result = model.beam_search(
+        result = model._beam_search(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -459,7 +459,7 @@ def resume(
         # )
 
         # 14. run beam sample
-        result = model.beam_sample(
+        result = model._beam_sample(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -499,7 +499,7 @@ def resume(
         #    **model_kwargs,
         # )
         # 13. run beam search
-        result = model.group_beam_search(
+        result = model._group_beam_search(
             input_ids,
             beam_scorer,
             logits_processor=prepared_logits_processor,
@@ -587,7 +587,7 @@ def resume(
         #    **model_kwargs,
         # )
         # 13. run beam search
-        return model.constrained_beam_search(
+        return model._constrained_beam_search(
             input_ids,
             constrained_beam_scorer=constrained_beam_scorer,
             logits_processor=prepared_logits_processor,

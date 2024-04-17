@@ -268,6 +268,10 @@ class Generator:
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
         logits_processor = [logits_guider, boundary_logits_processor, comments_logits_processor]
+        kwargs = {}
+        if "pad_token_id" not in config:
+            kwargs["pad_token_id"] = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
+        
         generated_result = resume(
             self.model,
             input_ids,
@@ -276,6 +280,7 @@ class Generator:
             stopping_criteria=[stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
+            **kwargs,
             **config,
         )
         generated_sequences = generated_result["sequences"]
