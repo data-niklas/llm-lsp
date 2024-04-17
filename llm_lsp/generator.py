@@ -16,6 +16,7 @@ from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
 from llm_lsp.lsp.logits_guider import LspLogitsProcessor
 from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
+from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.code_utils import CodeUtil
 from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.commentor import Commentor, Comment
@@ -25,6 +26,7 @@ import torch
 from contextlib import contextmanager
 from copy import deepcopy
 import copy
+import time
 
 DEFAULT_INTERRUPTS = [DeprecationInterrupt(), SignatureInterrupt()]
 
@@ -146,7 +148,9 @@ class Generator:
             == hash(self.model.generation_config)
             and self.model.config._has_non_default_generation_parameters()
         ):
-            new_generation_config = GenerationConfig.from_model_config(self.model.config)
+            new_generation_config = GenerationConfig.from_model_config(
+                self.model.config
+            )
             if new_generation_config != self.model.generation_config:
                 warnings.warn(
                     "You have modified the pretrained model configuration to control generation. This is a"
@@ -162,7 +166,11 @@ class Generator:
             **config
         )  # All unused kwargs must be model kwargs
         generation_mode = generation_config.get_generation_mode(None)
-        if generation_mode in [GenerationMode.ASSISTED_GENERATION, GenerationMode.GREEDY_SEARCH, GenerationMode.CONTRASTIVE_SEARCH, ]:
+        if generation_mode in [
+            GenerationMode.ASSISTED_GENERATION,
+            GenerationMode.GREEDY_SEARCH,
+            GenerationMode.CONTRASTIVE_SEARCH,
+        ]:
             return input_ids, model_kwargs
         elif generation_mode == GenerationMode.SAMPLE:
             return self.model._expand_inputs_for_generation(
@@ -178,14 +186,18 @@ class Generator:
                 is_encoder_decoder=self.model.config.is_encoder_decoder,
                 **model_kwargs,
             )
-        elif generation_mode in [GenerationMode.BEAM_SAMPLE, GenerationMode.BEAM_SEARCH, GenerationMode.GROUP_BEAM_SEARCH, GenerationMode.CONSTRAINED_BEAM_SEARCH]:
+        elif generation_mode in [
+            GenerationMode.BEAM_SAMPLE,
+            GenerationMode.BEAM_SEARCH,
+            GenerationMode.GROUP_BEAM_SEARCH,
+            GenerationMode.CONSTRAINED_BEAM_SEARCH,
+        ]:
             return self.model._expand_inputs_for_generation(
                 input_ids=input_ids,
                 expand_size=generation_config.num_beams,
                 is_encoder_decoder=self.model.config.is_encoder_decoder,
                 **model_kwargs,
             )
-
 
     def track_beam_selections(self, beam_indices, commentors, code_utils):
         """Beam indices for each batch. Access the selected beams using batch_index * batch_size + beam_index_in_batch
@@ -208,7 +220,10 @@ class Generator:
                 new_indices[j] = indices[index]
             indices = new_indices
 
+        # For debugging, will be removed when not needed anymore, so probably never
         a = 1
+
+        # I miss you already, my small a
 
         for i in range(len(indices)):
             index = indices[i]
@@ -228,22 +243,29 @@ class Generator:
             eos_tokens.append(self.tokenizer.eos_token_id)
         else:
             eos_tokens += self.tokenizer.eos_token_id
-        final_tokens = input_ids[:,-1:].view(-1)
+        final_tokens = input_ids[:, -1:].view(-1)
         result = sum(final_tokens == token_id for token_id in eos_tokens).nonzero()
         if len(result) == 0:
             # Return 0 when e.g. the maximum length of input_ids has been reached and thus no interrupt has been found
             return 0
         return result.item()
 
-
     def resume_generation(
-        self, input_ids, batch_size, logits_guider, boundary_logits_processor, config, commentors, code_utils
+        self,
+        input_ids,
+        batch_size,
+        logits_guider,
+        boundary_logits_processor,
+        comments_logits_processor,
+        config,
+        commentors,
+        code_utils,
     ):
         """
-            Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
-        """    
+        Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
+        """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
-        logits_processor = [logits_guider, boundary_logits_processor]
+        logits_processor = [logits_guider, boundary_logits_processor, comments_logits_processor]
         generated_result = resume(
             self.model,
             input_ids,
@@ -252,7 +274,7 @@ class Generator:
             stopping_criteria=[stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
-            **config
+            **config,
         )
         generated_sequences = generated_result["sequences"]
 
@@ -305,10 +327,20 @@ class Generator:
 
     def create_boundary_logits_processor(self):
         return BoundaryLogitsProcessor(self.tokenizer, [".", "("], self.disabled)
+    
+    def create_comments_logits_processor(self):
+        return CommentsLogitsProcessor(self.tokenizer, self.disabled)
 
     async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
         with self.device_placement():
             return await self._complete(code, repo_root, filename)
+
+    def fix_config(self, config, prompt):
+        if "max_new_tokens" in config:
+            prompt_len = len(self.tokenizer(prompt).input_ids)
+            config["max_length"] = prompt_len + config["max_new_tokens"]
+            del config["max_new_tokens"]
+        return config
 
     async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
         batch_size = 1
@@ -321,50 +353,50 @@ class Generator:
         prompt = prompt_util.format(code)
 
         # NOTE: They need to be stored per beam, as each beam may have different comments, AND THEY NEED TO BE SHUFFLED ACCORDING TO THE SELECTED BEAMS IN THE BEAMSEARCHSCORER
-        code_utils = [PythonCodeUtil() for i in range(batch_size*beam_size)]
-        commentors = [Commentor(code_utils[i]) for i in range(batch_size*beam_size)]
+        code_utils = [PythonCodeUtil() for i in range(batch_size * beam_size)]
+        commentors = [Commentor(code_utils[i]) for i in range(batch_size * beam_size)]
 
-        if "max_new_tokens" in config:
-            code_tokens = len(self.tokenizer(code).input_ids)
-            config["max_new_tokens"] += code_tokens
+        start_timestamp = time.time()
+        config = self.fix_config(config, prompt)
         logits_guider = self.create_lsp_logits_processor(
             [lsp], [prompt_util], [filename], beam_size
         )
         boundary_logits_processor = self.create_boundary_logits_processor()
+        comments_logits_processor = self.create_comments_logits_processor()
         input_ids = self.tokenizer(
             prompt, return_tensors="pt", add_special_tokens=False
         ).input_ids
         input_ids, _ = self.expand_input_ids(input_ids, config)
-        decoded_text = self.resume_generation(
-            input_ids, batch_size, logits_guider, boundary_logits_processor, config, commentors, code_utils
-        )
-        if logits_guider.interrupt is None:
-            return prompt_util.get_generated_code(decoded_text)
-        interrupt = logits_guider.interrupt
-        stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
-        commentor = commentors[stopped_beam_index]
-        code_util = code_utils[stopped_beam_index]
-        edited_prompt = self.edit_generation_text_for_completion(
-            decoded_text, prompt_util, interrupt, commentor, code_util
-        )
-        input_ids = self.edit_input_ids(interrupt, edited_prompt, stopped_beam_index)
-        logits_guider.resume()
-
         while True:
             decoded_text = self.resume_generation(
-                input_ids, batch_size, logits_guider, boundary_logits_processor, config, commentors, code_utils
+                input_ids,
+                batch_size,
+                logits_guider,
+                boundary_logits_processor,
+                comments_logits_processor,
+                config,
+                commentors,
+                code_utils,
             )
-            stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
-            if logits_guider.interrupt is None:
+            interrupt = logits_guider.interrupt
+            if interrupt is None:
                 result_code = prompt_util.get_whole_code(decoded_text)
                 commentor = commentors[0]
                 result_code = commentor.remove_all_comments(result_code)
-                return result_code[len(prompt_util.initial_text):]
-            interrupt = logits_guider.interrupt
+                return result_code[len(prompt_util.initial_text) :]
+            stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
             commentor = commentors[stopped_beam_index]
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
                 decoded_text, prompt_util, interrupt, commentor, code_util
             )
-            input_ids = self.edit_input_ids(interrupt, edited_prompt, stopped_beam_index)
+            input_ids = self.edit_input_ids(
+                interrupt, edited_prompt, stopped_beam_index
+            )
             logits_guider.resume()
+            # TODO: move into update config for resumption
+            if "max_time" in config:
+                current_timestamp = time.time()
+                time_for_iteration = current_timestamp - start_timestamp
+                config["max_time"] -= time_for_iteration
+                start_timestamp = current_timestamp

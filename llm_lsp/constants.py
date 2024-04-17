@@ -7,9 +7,9 @@ MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 4,
+    "num_beams": 1,
     # "diversity_penalty": 1.0,
-    "do_sample": True,
+    "do_sample": False,
     "top_k": 50,
     "top_p": 0.95,
     "num_return_sequences": 1,

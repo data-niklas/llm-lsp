@@ -11,7 +11,8 @@ class Lifetime(str, Enum):
 class InsertedComment:
     start_line: int
     end_line: int
-    lifetime: Lifetime
+    #lifetime: Lifetime
+    lifetime: int
     interrupt: str
 
 @dataclass
@@ -26,7 +27,8 @@ class Commentor:
         self.comments: List[InsertedComment] = [] # Always sorted by start_line
 
     def is_comment_old(self, code: str, comment: InsertedComment) -> bool:
-        if comment.lifetime == Lifetime.EPHEMERAL:
+        #if comment.lifetime == Lifetime.EPHEMERAL:
+        if comment.lifetime == 0:
             return True
         return False
 
@@ -49,7 +51,8 @@ class Commentor:
         self.comments.append(InsertedComment(
             start_line=start_index,
             end_line=end_index,
-            lifetime=comment.lifetime,
+            #lifetime=comment.lifetime,
+            lifetime=4,
             interrupt=comment.interrupt
         ))
         return "\n".join(code_lines)
@@ -71,6 +74,8 @@ class Commentor:
                 self.comments[j].start_line -= line_count
                 self.comments[j].end_line -= line_count
         self.comments = [comment for comment in self.comments if not self.is_comment_old(code, comment)]
+        for comment in self.comments:
+            comment.lifetime = max(comment.lifetime - 1, 0)
         return "\n".join(code_lines)
 
     def remove_all_comments(self, code: str) -> str:

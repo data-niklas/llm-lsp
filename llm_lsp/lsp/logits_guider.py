@@ -248,10 +248,6 @@ class LspLogitsProcessor(LogitsProcessor):
             text += "("
         return text
 
-    def downrank_comments(self, current_code, scores):
-        hashtag_id = self.tokenizer(current_code + "#", add_special_tokens=False).input_ids[-1]
-        scores[hashtag_id] = scores[hashtag_id] - 20
-        return scores
 
     def get_completions_text(self, completions):
         return [self.get_completion_text(completion) for completion in completions]
@@ -357,7 +353,6 @@ class LspLogitsProcessor(LogitsProcessor):
             # if len(non_deprecated_completions) > 0:
             #    c_scores = self.completion_ranker.rank_completions(current_code, non_deprecated_completions)
             #    logger.debug(list(zip(c_scores, [c.label for c in non_deprecated_completions])))
-            scores = self.downrank_comments(current_code, scores)
             scores = self.apply_constant_adjustments(
                 scores,
                 non_deprecated_first_tokens,
