@@ -1,7 +1,9 @@
 from transformers import AutoTokenizer, AutoModel, PreTrainedModel, GenerationMixin
 from transformers.generation import GenerationMode, GenerationConfig
 import warnings
-
+from tree_sitter import Language, Parser
+import tree_sitter_python
+PY_LANGUAGE = Language(tree_sitter_python.language(), "python")
 # from llm_lsp.lsp_client import LspClient
 from typing import Dict, Any, Optional, List
 from llm_lsp.prompt import Prompt
@@ -352,9 +354,11 @@ class Generator:
         prompt_util.init_completion_prompt()
         prompt = prompt_util.format(code)
 
+        parser = Parser()
+        parser.set_language(PY_LANGUAGE)
         # NOTE: They need to be stored per beam, as each beam may have different comments, AND THEY NEED TO BE SHUFFLED ACCORDING TO THE SELECTED BEAMS IN THE BEAMSEARCHSCORER
         code_utils = [PythonCodeUtil() for i in range(batch_size * beam_size)]
-        commentors = [Commentor(code_utils[i]) for i in range(batch_size * beam_size)]
+        commentors = [Commentor(code_utils[i], parser) for i in range(batch_size * beam_size)]
 
         start_timestamp = time.time()
         config = self.fix_config(config, prompt)

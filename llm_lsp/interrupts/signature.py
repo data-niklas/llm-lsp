@@ -1,7 +1,11 @@
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
-from llm_lsp.commentor import Comment, Lifetime
+from llm_lsp.commentor import Comment, Lifetime, InsertedComment
+from tree_sitter import Tree
 from typing import Any
+from llm_lsp.generator import PY_LANGUAGE
+
+PY_PAREN_OPEN_QUERY = PY_LANGUAGE.query("(\"(\") @element")
 
 TOKEN_ID = "[SIGNATURE_INTERRUPT]"
 SIGNATURE_COMMENT_TYPE = "signature"
@@ -10,6 +14,17 @@ class SignatureInterrupt(InterruptType):
     def __init__(self, maximum_documentation_length = 500):
         super().__init__(TOKEN_ID)
         self.maximum_documentation_length = maximum_documentation_length
+
+    def is_comment_old(code: str, tree: Tree, comment: InsertedComment) -> bool:
+        captures = PY_PAREN_OPEN_QUERY.captures(tree.root_node)
+        all_parens = [capture[0] for capture in captures]
+        parens_after_comment = [paren for paren in all_parens if paren.start_point[0] >= comment.end_line]
+        if len(parens_after_comment) == 0:
+            return False
+        last_paren = parens_after_comment[-1]
+        # TODO: save node in comment instead of finding it
+        last_sibling = last_paren.parent.children[-1]
+        return last_sibling.type == ")"
 
     def create_comment(self, signature_help: Any) -> Comment:
         active_signature = signature_help.signatures[signature_help.active_signature]
@@ -22,4 +37,4 @@ class SignatureInterrupt(InterruptType):
                 + documentation.replace("\n", "\nSignature note: ")
                 + '"""'
             )
-        return Comment(lifetime=Lifetime.EPHEMERAL, comment=comment, interrupt=SIGNATURE_COMMENT_TYPE)
+        return Comment(is_old=SignatureInterrupt.is_comment_old, comment=comment, interrupt=SIGNATURE_COMMENT_TYPE)
