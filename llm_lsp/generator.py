@@ -14,6 +14,7 @@ from pygls.lsp.client import BaseLanguageClient
 from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
 from llm_lsp.interrupts.deprecation import DeprecationInterrupt
 from llm_lsp.interrupts.signature import SignatureInterrupt
+from llm_lsp.interrupts.completion import CompletionInterrupt
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
 from llm_lsp.lsp.logits_guider import LspLogitsProcessor
@@ -22,6 +23,7 @@ from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.code_utils import CodeUtil
 from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.commentor import Commentor, Comment
+from llm_lsp.generation_utils.beam_tracking import BeamTracker
 import torch.nn.functional as F
 import os
 import torch
@@ -30,7 +32,7 @@ from copy import deepcopy
 import copy
 import time
 
-DEFAULT_INTERRUPTS = [DeprecationInterrupt(), SignatureInterrupt()]
+DEFAULT_INTERRUPTS = [DeprecationInterrupt(), SignatureInterrupt(), CompletionInterrupt()]
 
 PAD_TOKEN = "[PAD]"
 
@@ -56,6 +58,7 @@ class Generator:
         self.message_formatter = message_formatter
         self.interrupts = interrupts
         self.disabled = disabled
+        self.beam_tracker = BeamTracker()
         self.add_special_tokens()
 
     @contextmanager
@@ -201,7 +204,7 @@ class Generator:
                 **model_kwargs,
             )
 
-    def track_beam_selections(self, beam_indices, commentors, code_utils):
+    def track_beam_selections(self, commentors, code_utils):
         """Beam indices for each batch. Access the selected beams using batch_index * batch_size + beam_index_in_batch
 
         Args:
@@ -210,32 +213,29 @@ class Generator:
         # TODO: add batching
         new_commentors = []
         new_codeutils = []
-        indices = list(range(len(commentors)))
-        change_count = len(beam_indices[0])
-        beam_batch_count = len(beam_indices)
-        for i in range(change_count):
-            new_indices = deepcopy(indices)
-            for j in range(beam_batch_count):
-                tuple_index = beam_indices[j]
-                torch_index = tuple_index[i]
-                index = torch_index.item()
-                new_indices[j] = indices[index]
-            indices = new_indices
-
         # For debugging, will be removed when not needed anymore, so probably never
         a = 1
 
         # I miss you already, my small a
-
+        indices = self.beam_tracker.get_final_beam_indices()
         for i in range(len(indices)):
             index = indices[i]
             commentor = commentors[index]
             code_util = code_utils[index]
-            new_commentors.append(deepcopy(commentor))
+            parser = commentor.parser
+            del commentor.parser
+            tree = commentor.tree
+            del commentor.tree
+            commentor_copy = deepcopy(commentor)
+            commentor_copy.parser = parser
+            commentor.parser = parser
+            commentor_copy.tree = tree
+            commentor.tree = tree
+            new_commentors.append(commentor_copy)
             new_codeutils.append(deepcopy(code_util))
 
         # Change in place
-        for i in range(len(beam_indices)):
+        for i in range(len(commentors)):
             commentors[i] = new_commentors[i]
             code_utils[i] = new_codeutils[i]
 
@@ -272,6 +272,7 @@ class Generator:
         if "pad_token_id" not in config:
             kwargs["pad_token_id"] = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
         
+
         generated_result = resume(
             self.model,
             input_ids,
@@ -280,7 +281,7 @@ class Generator:
             stopping_criteria=[stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
-            **kwargs,
+            beam_tracker=self.beam_tracker,
             **config,
         )
         generated_sequences = generated_result["sequences"]
@@ -289,9 +290,8 @@ class Generator:
             beam_input_ids = generated_result["beam_input_ids"]
             logits_guider.interrupt.input_ids = beam_input_ids
 
-        if "selected_beam_indices" in generated_result:
-            selected_beam_indices = generated_result["selected_beam_indices"]
-            self.track_beam_selections(selected_beam_indices, commentors, code_utils)
+        if "num_beams" in config:
+            self.track_beam_selections(commentors, code_utils)
         # TODO: Check if this is always zero, as the top beam (the one with eos) might be at the "top" with index 0
 
         last_token_ids = generated_sequences[0]
@@ -313,7 +313,7 @@ class Generator:
         generated_code = commentor.remove_old_comments(generated_code)
 
         interrupt_type = self.find_interrupt_type(interrupt)
-        comment = interrupt_type.create_comment(interrupt.interrupt_context)
+        comment = interrupt_type.create_comment(interrupt.interrupt_context, code_util)
         edited_generated_code = commentor.insert_comment(generated_code, comment)
         edited_prompt = prompt_util.format(edited_generated_code)
         return edited_prompt
@@ -327,9 +327,9 @@ class Generator:
         input_ids[interrupt_beam_index] = edited_input_ids
         return input_ids
 
-    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
+    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size, commentors):
         return LspLogitsProcessor(
-            self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.disabled
+            self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.beam_tracker, commentors, self.disabled
         )
 
     def create_boundary_logits_processor(self):
@@ -368,7 +368,7 @@ class Generator:
         start_timestamp = time.time()
         config = self.fix_config(config, prompt)
         logits_guider = self.create_lsp_logits_processor(
-            [lsp], [prompt_util], [filename], beam_size
+            [lsp], [prompt_util], [filename], beam_size, commentors
         )
         boundary_logits_processor = self.create_boundary_logits_processor()
         comments_logits_processor = self.create_comments_logits_processor()

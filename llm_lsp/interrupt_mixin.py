@@ -19,34 +19,7 @@ logger = logging.get_logger(__name__)
 from transformers.integrations import is_deepspeed_zero3_enabled
 import copy
 import inspect
-
-
-class BeamIndexStoringSearchScores(BeamSearchScorer):
-    def finalize(
-        self,
-        input_ids: torch.LongTensor,
-        final_beam_scores: torch.FloatTensor,
-        final_beam_tokens: torch.LongTensor,
-        final_beam_indices: torch.LongTensor,
-        max_length: int,
-        pad_token_id: Optional[int] = None,
-        eos_token_id: Optional[Union[int, List[int]]] = None,
-        beam_indices: Optional[torch.LongTensor] = None,
-        decoder_prompt_len: Optional[int] = 0,
-    ):
-        self.input_ids = input_ids # NOTE: to be read later on to track beam indices
-        self.beam_indices = beam_indices # NOTE: to be read later on to track changes
-        return super().finalize(
-            input_ids,
-            final_beam_scores,
-            final_beam_tokens,
-            final_beam_indices,
-            max_length,
-            pad_token_id,
-            eos_token_id,
-            beam_indices,
-            decoder_prompt_len,
-        )
+from llm_lsp.generation_utils.beam_tracking import BeamIndexStoringSearchScores, BeamTracker
 
 
 @torch.no_grad()
@@ -63,6 +36,7 @@ def resume(
     streamer: Optional["BaseStreamer"] = None,
     negative_prompt_ids: Optional[torch.Tensor] = None,
     negative_prompt_attention_mask: Optional[torch.Tensor] = None,
+    beam_tracker: Optional[BeamTracker] = None,
     **kwargs,
 ) -> Union[GenerateOutput, torch.LongTensor]:
 
@@ -406,6 +380,7 @@ def resume(
             do_early_stopping=generation_config.early_stopping,
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             max_length=generation_config.max_length,
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
         # input_ids, model_kwargs = model._expand_inputs_for_generation(
@@ -431,7 +406,6 @@ def resume(
         )
         # NOTE: changed to inject selected beam indices
         assert generation_config.return_dict_in_generate
-        result["selected_beam_indices"] = beam_scorer.beam_indices
         result["beam_input_ids"] = beam_scorer.input_ids
         return result
 
@@ -448,6 +422,7 @@ def resume(
             do_early_stopping=generation_config.early_stopping,
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             max_length=generation_config.max_length,
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
         )
 
         # 13. interleave input_ids with `num_beams` additional sequences per batch
@@ -475,7 +450,6 @@ def resume(
         )
         # NOTE: changed to inject selected beam indices
         assert generation_config.return_dict_in_generate
-        result["selected_beam_indices"] = beam_scorer.beam_indices
         result["beam_input_ids"] = beam_scorer.input_ids
         return result
 
@@ -490,6 +464,7 @@ def resume(
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             num_beam_groups=generation_config.num_beam_groups,
             max_length=generation_config.max_length,
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
         # input_ids, model_kwargs = model._expand_inputs_for_generation(
@@ -514,7 +489,6 @@ def resume(
         )
         # NOTE: changed to inject selected beam indices
         assert generation_config.return_dict_in_generate
-        result["selected_beam_indices"] = beam_scorer.beam_indices
         result["beam_input_ids"] = beam_scorer.input_ids
         return result
 

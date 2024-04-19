@@ -31,3 +31,7 @@ class CodeUtil(ABC):
             return ""
         indentation_end = indentation_match.end()
         return code_line[:indentation_end]
+
+    @abstractmethod
+    def shorten_docstring(self, text: str) -> str:
+        pass

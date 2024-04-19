@@ -16,6 +16,7 @@ import re
 # TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.interrupts.deprecation import is_deprecated, TOKEN_ID as DEPRECATION_TOKEN_ID
 from llm_lsp.interrupts.signature import TOKEN_ID as SIGNATURE_TOKEN_ID
+from llm_lsp.interrupts.completion import TOKEN_ID as COMPLETION_TOKEN_ID
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.lsp.file import LspCodeFile
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ CompletionItem.__hash__ = custom_completion_item_hash
 class LspLogitsProcessor(LogitsProcessor):
     # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
     # This should stop Parser(fields=Parser)
-    def __init__(self, tokenizer, lsp_clients, prompt_utils, filenames, expand_size, disabled):
+    def __init__(self, tokenizer, lsp_clients, prompt_utils, filenames, expand_size, beam_tracker, commentors, disabled):
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_clients: BaseLanguageClient = lsp_clients
         self.prompt_utils = prompt_utils
@@ -48,6 +49,8 @@ class LspLogitsProcessor(LogitsProcessor):
         self.signature_cache = {}
         self.expand_size = expand_size
         self.interrupt = None
+        self.beam_tracker = beam_tracker
+        self.commentors = commentors
         self.disabled = disabled
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
@@ -203,15 +206,14 @@ class LspLogitsProcessor(LogitsProcessor):
         if len(deprecated_completions) == 0:
             return True
         return "# Deprecation note: " in current_code
-        # lines = current_code.splitlines()[:-1]
-        # lines.reverse()
-        # for line in lines:
-        #     line = line.strip()
-        #     if not line.startswith("# "):
-        #         return False
-        #     elif line.startswith("# Deprecation note: "):
-        #         return True
-        # return False
+
+    def check_completion_documentation_included(
+        self, current_code: str, completions
+    ):
+        if len(completions) < 4:
+            return True
+        return "# Completion note: " in current_code
+
 
     def check_signature_documentation_included(self, current_code: str, signature_help):
         if signature_help is None or len(signature_help.signatures) == 0:
@@ -316,10 +318,14 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            if not self.check_deprecation_documentation_included(
-                current_code, deprecated_completions
-            ):
-                self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
+            #if not self.check_completion_documentation_included(
+            #    current_code, non_deprecated_completions
+            #):
+                #self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
+            #if not self.check_deprecation_documentation_included(
+            #    current_code, deprecated_completions
+            #):
+            #    self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
             if not self.check_signature_documentation_included(
                 current_code, signature_help
             ):

@@ -21,3 +21,5 @@ marisa_trie
 
 tree-sitter
 tree-sitter-python
+
+docstring_parser

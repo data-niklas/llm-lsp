@@ -1,6 +1,7 @@
 from llm_lsp.code_utils import CodeUtil
 import re
 from typing import Optional
+from docstring_parser import parse
 
 class PythonCodeUtil(CodeUtil):
     @property
@@ -19,3 +20,10 @@ class PythonCodeUtil(CodeUtil):
 
     def make_single_line_comment(self, text: str) -> str:
         return "# " + text
+
+    def shorten_docstring(self, text: str) -> str:
+        text = text.strip()
+        if text.startswith("```"):
+            text = "\n".join(text.splitlines()[1:-1])
+        docstring = parse(text)
+        return f"{docstring.short_description}"

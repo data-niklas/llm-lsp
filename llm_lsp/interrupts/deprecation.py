@@ -13,6 +13,7 @@ from tree_sitter import Tree
 
 PY_IDENTIFIER_QUERY = PY_LANGUAGE.query("(identifier) @element")
 
+
 def module_name_and_variable_parts(item):
     parts: List[str] = item.split(".")
     module_name_parts = []
@@ -56,8 +57,10 @@ def is_deprecated(item):
         variable = getattr(variable, variable_part)
     return hasattr(variable, "__deprecated__")
 
+
 TOKEN_ID = "[DEPRECATION_INTERRUPT]"
 DEPRECATION_COMMENT_TYPE = "deprecation"
+
 
 def next_sibling(node):
     if node.next_sibling is not None:
@@ -74,14 +77,20 @@ class DeprecationInterrupt(InterruptType):
     def is_comment_old(code: str, tree: Tree, comment: InsertedComment) -> bool:
         captures = PY_IDENTIFIER_QUERY.captures(tree.root_node)
         all_identifiers = [capture[0] for capture in captures]
-        identifiers_after_comment = [identifier for identifier in all_identifiers if identifier.start_point[0] >= comment.end_line]
+        identifiers_after_comment = [
+            identifier
+            for identifier in all_identifiers
+            if identifier.start_point[0] >= comment.end_line
+        ]
         if len(identifiers_after_comment) == 0:
             return False
         last_identifier = identifiers_after_comment[-1]
         identifier_sibling = next_sibling(last_identifier)
-        return identifier_sibling is not None
+        return identifier_sibling is not None and identifier_sibling.type != "."
 
-    def create_comment(self, context: Any) -> Comment:
+    def create_comment(self, context: Any, _code_util) -> Comment:
+        context.sort(key=lambda x: x.sort_text, reverse=True)
+        #context = context[-3:]
         notes = [
             "Deprecation note: "
             + get_deprecation_message(
@@ -89,7 +98,11 @@ class DeprecationInterrupt(InterruptType):
             ).strip()
             for completion_item in context
         ]
-        return Comment(is_old=DeprecationInterrupt.is_comment_old, comment="\n".join(notes), interrupt=DEPRECATION_COMMENT_TYPE)
+        return Comment(
+            is_old=DeprecationInterrupt.is_comment_old,
+            comment="\n".join(notes),
+            interrupt=DEPRECATION_COMMENT_TYPE,
+        )
 
 
 if __name__ == "__main__":
