@@ -70,6 +70,7 @@ class BeamTracker:
         self.indices = None
 
     def track_beam_indices(self, beam_indices):
+        # Could be optimized by caching old indices calculated from n beam_i
         change_count = len(beam_indices[0])
         beam_batch_count = len(beam_indices)
         indices = list(range(beam_batch_count))

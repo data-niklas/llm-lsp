@@ -22,7 +22,7 @@ from llm_lsp.lsp.file import LspCodeFile
 from dataclasses import dataclass
 from typing import Any
 
-INTERRUPT_LOGITS_SCORE = 100
+INTERRUPT_LOGITS_SCORE = float("inf")
 RANK_DELTA = 3.0
 
 @dataclass
@@ -318,14 +318,14 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            #if not self.check_completion_documentation_included(
-            #    current_code, non_deprecated_completions
-            #):
-                #self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
-            #if not self.check_deprecation_documentation_included(
-            #    current_code, deprecated_completions
-            #):
-            #    self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
+            if not self.check_completion_documentation_included(
+                current_code, non_deprecated_completions
+            ):
+                self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
+            if not self.check_deprecation_documentation_included(
+                current_code, deprecated_completions
+            ):
+                self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
             if not self.check_signature_documentation_included(
                 current_code, signature_help
             ):
