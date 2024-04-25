@@ -32,6 +32,7 @@ class Prompt:
         self.initial_prompt = prompt
         self.code_prefix = ""
 
+
     def wrap_in_code_block(self, code):
         # TODO: generalize the py
         return "```py\n" + code
@@ -44,12 +45,15 @@ class Prompt:
         if len(lines) > 0 and "```" in lines[0]:
             lines = lines[1:]
             text = "\n".join(lines)
-            return text.split("\n```")[0]
+            return text.split("```")[0].strip()
         return "\n".join(lines)
 
 
     def get_generated_code(self, text):
-        text = text.replace("<s> ", "<s>")
+        # Remove trailing " " after special tokens in some tokenizers to actually make encoding tokens reversible
+        TOKEN_JAIL = ["<s>", "<|system|>", "<|user|>", "<|assistant|>", "<|end|>"]
+        for naughty_token in TOKEN_JAIL:
+            text = text.replace(naughty_token + " ", naughty_token)
         generated_text = text[len(self.initial_prompt) :]
         generated_code = self.extract_from_markdown_code_block(generated_text)
         return generated_code[len(self.code_prefix):]

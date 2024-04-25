@@ -213,11 +213,8 @@ class Generator:
         # TODO: add batching
         new_commentors = []
         new_codeutils = []
-        # For debugging, will be removed when not needed anymore, so probably never
-        a = 1
-
-        # I miss you already, my small a
         indices = self.beam_tracker.get_final_beam_indices()
+        a = None
         for i in range(len(indices)):
             index = indices[i]
             commentor = commentors[index]
@@ -238,6 +235,7 @@ class Generator:
         for i in range(len(commentors)):
             commentors[i] = new_commentors[i]
             code_utils[i] = new_codeutils[i]
+        a = None
 
     def index_of_beam_to_edit(self, input_ids):
         eos_tokens = self.interrupt_input_ids()
@@ -261,7 +259,7 @@ class Generator:
         comments_logits_processor,
         config,
         commentors,
-        code_utils,
+        code_utils
     ):
         """
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
@@ -282,6 +280,7 @@ class Generator:
             return_dict_in_generate=True,
             output_scores=True,
             beam_tracker=self.beam_tracker,
+            use_cache=True,
             **config,
         )
         generated_sequences = generated_result["sequences"]
@@ -290,7 +289,7 @@ class Generator:
             beam_input_ids = generated_result["beam_input_ids"]
             logits_guider.interrupt.input_ids = beam_input_ids
 
-        if "num_beams" in config:
+        if self.beam_tracker.is_beam_search():
             self.track_beam_selections(commentors, code_utils)
         # TODO: Check if this is always zero, as the top beam (the one with eos) might be at the "top" with index 0
 
@@ -310,10 +309,10 @@ class Generator:
         self, decoded_text, prompt_util, interrupt, commentor, code_util
     ):
         generated_code = prompt_util.get_whole_code(decoded_text)
-        generated_code = commentor.remove_old_comments(generated_code)
-
         interrupt_type = self.find_interrupt_type(interrupt)
         comment = interrupt_type.create_comment(interrupt.interrupt_context, code_util)
+        generated_code = commentor.remove_old_comments(generated_code, comment.interrupt)
+
         edited_generated_code = commentor.insert_comment(generated_code, comment)
         edited_prompt = prompt_util.format(edited_generated_code)
         return edited_prompt

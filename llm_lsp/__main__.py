@@ -44,17 +44,28 @@ nest_asyncio.apply()
 def highlight_code(code):
     return highlight(code, PythonLexer(), Terminal256Formatter())
 
+
 async def generate_test(model, tokenizer, generation_config, code, repo_root, filename):
     generator = Generator(model, tokenizer, generation_config)
 
     return await generator.complete(code, repo_root, filename)
 
+
 async def test(args):
-    from llm_lsp.generation_utils.user_model import HumanModel, HumanConfig, HumanTokenizer
+    from llm_lsp.generation_utils.user_model import (
+        HumanModel,
+        HumanConfig,
+        HumanTokenizer,
+    )
+
     config = HumanConfig("/nfs/home/nloeser_msc2023/llm-lsp-typing-demo/watch.py")
     tokenizer = HumanTokenizer()
     model = HumanModel(config, tokenizer)
-    generation_config = {"num_return_sequences": 1, "do_sample": False, "max_length": 5000}
+    generation_config = {
+        "num_return_sequences": 1,
+        "do_sample": False,
+        "max_length": 5000,
+    }
     generator = Generator(model, tokenizer, generation_config)
     if args.strategy == "COMPLETE":
         with open(args.file, "r") as f:
@@ -67,13 +78,18 @@ async def test(args):
         logger.info("Code:\n##########\n" + hl + "\n##########")
 
 
-
 async def main(args):
-    if True:
-        await test(args)
-        return
-    model = AutoModelForCausalLM.from_pretrained(MODEL)
-    model.half().to("cuda")
+    # if True:
+    #    await test(args)
+    #    return
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL,
+        trust_remote_code=True,
+        #attn_implementation="eager",
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
+        attn_implementation="eager"
+    )
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
@@ -95,7 +111,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/textual.py")
+    parser.add_argument("-f", "--file", default="tests/pydantic_2.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     parser.add_argument("-s", "--strategy", default="COMPLETE")

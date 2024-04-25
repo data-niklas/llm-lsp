@@ -1,7 +1,7 @@
 from llm_lsp.code_utils import CodeUtil
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Callable
+from typing import List, Callable, Optional, Any
 from tree_sitter import Tree, Parser
 
 
@@ -14,15 +14,15 @@ class InsertedComment:
     start_line: int
     end_line: int
     interrupt: str
-    is_old: Callable[[str, Tree, "InsertedComment"], bool]
+    target_column: int
+    context: Any
 
 
 @dataclass
 class Comment:
     comment: str
     interrupt: str
-    is_old: Callable[[str, Tree, InsertedComment], bool]
-
+    context: Any
 
 class Commentor:
     def __init__(self, code_util: CodeUtil, parser: Parser):
@@ -52,16 +52,19 @@ class Commentor:
                 start_line=start_index,
                 end_line=end_index,
                 interrupt=comment.interrupt,
-                is_old=comment.is_old,
+                target_column=len(code_lines[-1]),
+                context=comment.context
             )
         )
         return "\n".join(code_lines)
 
-    def code_has_comment_of_interrupt(self, code: str, interrupt: str) -> bool:
-        code_lines = code.splitlines()
-        pass
+    def get_comment_of_interrupt(self, interrupt: str) -> Optional[InsertedComment]:
+        for comment in self.comments:
+            if comment.interrupt == interrupt:
+                return comment
+        return None
 
-    def remove_old_comments(self, code: str) -> str:
+    def remove_old_comments(self, code: str, interrupt: str) -> str:
         if self.tree is not None:
             self.tree = self.parser.parse(bytes(code, "utf-8"), self.tree)
         else:
@@ -72,7 +75,7 @@ class Commentor:
         old_comments_with_index = [
             (i, comment)
             for (i, comment) in enumerate(self.comments)
-            if comment.is_old(code, self.tree, comment)
+            if comment.interrupt == interrupt or interrupt == "signature"
         ]
         for i, comment in reversed(old_comments_with_index):
             line_count = comment.end_line - comment.start_line
@@ -85,7 +88,7 @@ class Commentor:
         self.comments = [
             comment
             for comment in self.comments
-            if not comment.is_old(code, self.tree, comment)
+            if comment.interrupt != interrupt and interrupt != "signature"
         ]
         return "\n".join(code_lines)
 

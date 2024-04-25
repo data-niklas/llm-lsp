@@ -1,15 +1,16 @@
-MODEL = "codellama/CodeLlama-7b-Instruct-hf"
-MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
+#MODEL = "codellama/CodeLlama-7b-Instruct-hf"
+#MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
 #MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 #MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 #MODEL = "google/codegemma-7b-it"
+MODEL = "microsoft/Phi-3-mini-4k-instruct"
 
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 4,
+    "num_beams": 1,
     # "diversity_penalty": 1.0,
-    "do_sample": True,
+    "do_sample": False,
     "top_k": 50,
     "top_p": 0.95,
     "num_return_sequences": 1,
