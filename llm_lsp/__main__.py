@@ -85,10 +85,9 @@ async def main(args):
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,
         trust_remote_code=True,
-        #attn_implementation="eager",
         torch_dtype=torch.bfloat16,
         device_map="cuda",
-        attn_implementation="eager"
+        attn_implementation="flash_attention_2"
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -111,7 +110,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/pydantic_2.py")
+    parser.add_argument("-f", "--file", default="tests/pytorch.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     parser.add_argument("-s", "--strategy", default="COMPLETE")

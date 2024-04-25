@@ -23,3 +23,6 @@ tree-sitter
 tree-sitter-python
 
 docstring_parser
+# For better performance for models like phi-3
+wheel
+flash-attn

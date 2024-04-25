@@ -48,11 +48,12 @@ class Prompt:
             return text.split("```")[0].strip()
         return "\n".join(lines)
 
+    def get_naughty_tokens(self):
+        return self.tokenizer.added_tokens_encoder.keys()
 
     def get_generated_code(self, text):
         # Remove trailing " " after special tokens in some tokenizers to actually make encoding tokens reversible
-        TOKEN_JAIL = ["<s>", "<|system|>", "<|user|>", "<|assistant|>", "<|end|>"]
-        for naughty_token in TOKEN_JAIL:
+        for naughty_token in self.get_naughty_tokens():
             text = text.replace(naughty_token + " ", naughty_token)
         generated_text = text[len(self.initial_prompt) :]
         generated_code = self.extract_from_markdown_code_block(generated_text)

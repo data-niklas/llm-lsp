@@ -8,9 +8,9 @@ MODEL = "microsoft/Phi-3-mini-4k-instruct"
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 1,
+    "num_beams": 4,
     # "diversity_penalty": 1.0,
-    "do_sample": False,
+    "do_sample": True,
     "top_k": 50,
     "top_p": 0.95,
     "num_return_sequences": 1,
