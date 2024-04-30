@@ -8,6 +8,7 @@ class Prompt:
         self.tokenizer = tokenizer
         self.initial_text = initial_text
         self.message_formatter = message_formatter
+        self.instructions = []
 
     def init_completion_prompt(self):
         """Create a complete prompt with special tokens and ready to use for generation"""
@@ -21,17 +22,30 @@ class Prompt:
         self.initial_prompt = prompt
         self.code_prefix = self.initial_text
 
-    def init_generation_prompt(self):
+    def init_prompt_with_instructions(self):
+        """Create a complete prompt with special tokens and ready to use for generation"""
+        i = " ".join([c.comment + "." for c in self.instructions])
         try:
-            messages = self.message_formatter.create_generation_messages(self.initial_text, True)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, tokenizer_kwargs={"add_special_tokens": False}, add_generation_prompt=False)
+            messages = self.message_formatter.create_completion_messages(self.initial_text, True)
+            for message in messages:
+                if message["role"] == "user":
+                    message["content"] += ". " + i
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
-            messages = self.message_formatter.create_generation_messages(self.initial_text, False)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, tokenizer_kwargs={"add_special_tokens": False}, add_generation_prompt=False)
+            messages = self.message_formatter.create_completion_messages(self.initial_text, False)
+            for message in messages:
+                if message["role"] == "user":
+                    message["content"] += ". " + i
+            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         self.initial_prompt = prompt
-        self.code_prefix = ""
+        self.code_prefix = self.initial_text
 
+    def add_comment(self, comment, name):
+        self.instructions = [i for i in self.instructions if i.interrupt != name]
+        if comment is not None:
+            self.instructions.append(comment)
+        self.init_prompt_with_instructions() 
 
     def wrap_in_code_block(self, code):
         # TODO: generalize the py
@@ -51,7 +65,7 @@ class Prompt:
     def get_naughty_tokens(self):
         return self.tokenizer.added_tokens_encoder.keys()
 
-    def get_generated_code(self, text):
+    def get_generated_code(self, text: str):
         # Remove trailing " " after special tokens in some tokenizers to actually make encoding tokens reversible
         for naughty_token in self.get_naughty_tokens():
             text = text.replace(naughty_token + " ", naughty_token)

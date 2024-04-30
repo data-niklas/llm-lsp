@@ -17,9 +17,12 @@ import re
 from llm_lsp.interrupts.deprecation import (
     is_deprecated,
     TOKEN_ID as DEPRECATION_TOKEN_ID,
-    DEPRECATION_COMMENT_TYPE
+    DEPRECATION_COMMENT_TYPE,
 )
-from llm_lsp.interrupts.signature import TOKEN_ID as SIGNATURE_TOKEN_ID, SIGNATURE_COMMENT_TYPE
+from llm_lsp.interrupts.signature import (
+    TOKEN_ID as SIGNATURE_TOKEN_ID,
+    SIGNATURE_COMMENT_TYPE,
+)
 from llm_lsp.interrupts.completion import (
     TOKEN_ID as COMPLETION_TOKEN_ID,
     COMPLETION_COMMENT_TYPE,
@@ -31,7 +34,7 @@ from typing import Any
 
 # Was inf but caused issues
 INTERRUPT_LOGITS_SCORE = 1000.0
-RANK_DELTA = 3.0
+RANK_DELTA = 7.0
 
 
 @dataclass
@@ -50,21 +53,21 @@ CompletionItem.__hash__ = custom_completion_item_hash
 def eq_completions_items(a, b):
     if len(a) != len(b):
         return False
-    for (x, y) in zip(a,b):
+    for x, y in zip(a, b):
         if x.insert_text != y.insert_text:
             return False
     return True
+
 
 def eq_signature_help(a, b):
     a = a.signatures
     b = b.signatures
     if len(a) != len(b):
         return False
-    for (x, y) in zip(a,b):
+    for x, y in zip(a, b):
         if x.label != y.label:
             return False
     return True
-
 
 
 class LspLogitsProcessor(LogitsProcessor):
@@ -209,6 +212,9 @@ class LspLogitsProcessor(LogitsProcessor):
             scores[deprecated_token] -= RANK_DELTA
         return scores
 
+    def filter_uri(self, completions, uri):
+        return [c for c in completions if not uri.endswith(c.detail)]
+
     def filter_completions_by_postfix(self, trigger_phrase: str, completions):
         return [
             completion
@@ -249,34 +255,33 @@ class LspLogitsProcessor(LogitsProcessor):
         comment = commentor.get_comment_of_interrupt(DEPRECATION_COMMENT_TYPE)
         if comment is None:
             return False
-        code_lines = current_code.splitlines()
         # TODO: check if comment actually in line before
-        last_code_line = code_lines[-1]
         return eq_completions_items(deprecated_completions, comment.context)
-        #return len(last_code_line) - len(trigger_phrase) == comment.target_column
 
     def check_completion_documentation_included(
         self, i: int, trigger_phrase: str, current_code: str, completions
     ):
-        if len(completions) < 4:
-            return True
+        #        if len(completions) < 4:
+        #            return True
         commentor_index = i
         if self.beam_tracker.is_beam_search():
             commentor_index = self.beam_tracker.get_final_beam_indices()[i]
         commentor = self.commentors[commentor_index]
         comment = commentor.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
+            if len(completions) == 0:
+                return True
             return False
         code_lines = current_code.splitlines()
         # TODO: check if comment actually in line before
         last_code_line = code_lines[-1]
         return eq_completions_items(completions, comment.context)
-        #return len(last_code_line) - len(trigger_phrase) == comment.target_column
+        # return len(last_code_line) - len(trigger_phrase) == comment.target_column
 
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
     ):
-        if signature_help is None or len(signature_help.signatures) == 0:
+        if signature_help is None:  # or len(signature_help.signatures) == 0:
             return True
         commentor_index = i
         if self.beam_tracker.is_beam_search():
@@ -284,10 +289,12 @@ class LspLogitsProcessor(LogitsProcessor):
         commentor = self.commentors[commentor_index]
         comment = commentor.get_comment_of_interrupt(SIGNATURE_COMMENT_TYPE)
         if comment is None:
+            if len(signature_help.signatures) == 0:
+                return True
             return False
 
         return eq_signature_help(signature_help, comment.context)
-        #return len(last_code_line) - len(trigger_phrase) == comment.target_column
+        # return len(last_code_line) - len(trigger_phrase) == comment.target_column
 
     def should_complete(self, code):
         symbols = [")", "\n", " ", "\t", "]", "}"]
@@ -361,16 +368,19 @@ class LspLogitsProcessor(LogitsProcessor):
             signature_help.signatures = self.filter_builtin_signatures(
                 signature_help.signatures
             )
-            filtered_completions = self.filter_misc(
-                self.filter_completions_by_postfix(
-                    trigger_phrase,
-                    self.filter_completions_by_case(
+            filtered_completions = self.filter_uri(
+                self.filter_misc(
+                    self.filter_completions_by_postfix(
                         trigger_phrase,
-                        self.filter_completions_by_kind(
-                            self.filter_builtin_completions(completions)
+                        self.filter_completions_by_case(
+                            trigger_phrase,
+                            self.filter_completions_by_kind(
+                                self.filter_builtin_completions(completions)
+                            ),
                         ),
-                    ),
-                )
+                    )
+                ),
+                lsp_code_file.uri,
             )
             filtered_completions.sort(key=lambda x: x.sort_text or x.insert_text)
             # TODO: trigger on selection / Selection INTERRUPT with the SINGULAR completion item
@@ -378,20 +388,19 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            if not self.check_completion_documentation_included(
-                i, trigger_phrase, current_code, non_deprecated_completions
-            ):
-                self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
+            #if not self.check_completion_documentation_included(
+            #    i, trigger_phrase, current_code, non_deprecated_completions
+            #):
+            #    self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
             if not self.check_deprecation_documentation_included(
                 i, trigger_phrase, current_code, deprecated_completions
             ):
                 self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
-            if not self.check_signature_documentation_included(
-                i, trigger_phrase, current_code, signature_help
-            ):
-                self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
+            #if not self.check_signature_documentation_included(
+            #    i, trigger_phrase, current_code, signature_help
+            #):
+            #    self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
                 # TODO: do not interrupt on stdlib stuff
-
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
             # for each completion text, compare to trigger_phrase and get the next few characters
             # add the characters to the current_code to get the next tokens

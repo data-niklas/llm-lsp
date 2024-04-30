@@ -266,6 +266,7 @@ class Generator:
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
         logits_processor = [logits_guider, boundary_logits_processor, comments_logits_processor]
+        #logits_processor = [logits_guider, comments_logits_processor]
         kwargs = {}
         if "pad_token_id" not in config:
             kwargs["pad_token_id"] = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
@@ -310,11 +311,13 @@ class Generator:
     ):
         generated_code = prompt_util.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
+        generated_code = commentor.remove_old_comments(generated_code, interrupt_type.type_name())
         comment = interrupt_type.create_comment(interrupt.interrupt_context, code_util)
-        generated_code = commentor.remove_old_comments(generated_code, comment.interrupt)
 
-        edited_generated_code = commentor.insert_comment(generated_code, comment)
-        edited_prompt = prompt_util.format(edited_generated_code)
+        if comment is not None:
+            generated_code = commentor.insert_comment(generated_code, comment)
+        #prompt_util.add_comment(comment, interrupt_type.type_name())
+        edited_prompt = prompt_util.format(generated_code)
         return edited_prompt
 
     def edit_input_ids(self, interrupt, edited_prompt, interrupt_beam_index):

@@ -1,7 +1,7 @@
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
 from llm_lsp.code_utils import CodeUtil
-from typing import Any
+from typing import Any, Optional
 import importlib
 import sys
 import json
@@ -66,17 +66,15 @@ class CompletionInterrupt(InterruptType):
         super().__init__(TOKEN_ID)
 
 
-    def create_comment(self, context: Any, code_util: CodeUtil) -> Comment:
+    def type_name(self) -> str:
+        return COMPLETION_COMMENT_TYPE
+
+    def create_comment(self, context: Any, code_util: CodeUtil) -> Optional[Comment]:
+        if len(context) == 0:
+            return None
         used_context = [item for item in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
-        used_context = context[-3:]
-        notes = [
-            "Completion note: "
-            + get_completion_message(completion_item, code_util).replace(
-                "\n", "\nCompletion note: "
-            )
-            for completion_item in used_context
-        ]
+        notes = ["Hint: Use one of the following to complete the variable: " + ", ".join([item.label for item in used_context])]
         return Comment(
             comment="\n".join(notes),
             interrupt=COMPLETION_COMMENT_TYPE,

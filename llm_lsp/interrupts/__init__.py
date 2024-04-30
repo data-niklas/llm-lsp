@@ -30,11 +30,15 @@ class InterruptType(ABC):
         self.token = token
         self.input_id = None
 
+    @abstractmethod
+    def type_name(self) -> str:
+        pass
+
     def init_input_id(self, tokenizer):
         self.input_id = tokenizer.convert_tokens_to_ids(self.token)
 
     @abstractmethod
-    def create_comment(self, context: Any, code_util: CodeUtil) -> Comment:
+    def create_comment(self, context: Any, code_util: CodeUtil) -> Optional[Comment]:
         pass
 
 

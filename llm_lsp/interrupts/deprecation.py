@@ -1,7 +1,7 @@
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt import Prompt
 from llm_lsp.code_utils import CodeUtil
-from typing import Any
+from typing import Any, Optional
 import importlib
 import sys
 import json
@@ -64,14 +64,18 @@ class DeprecationInterrupt(InterruptType):
     def __init__(self):
         super().__init__(TOKEN_ID)
 
+    def type_name(self) -> str:
+        return DEPRECATION_COMMENT_TYPE
 
-    def create_comment(self, context: Any, _code_util) -> Comment:
+    def create_comment(self, context: Any, _code_util) -> Optional[Comment]:
+        if len(context) == 0:
+            return None
         used_context = [a for a in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
         #context = context[-3:]
         notes = [
-            "Deprecation note: "
-            + get_deprecation_message(
+            #"The following variable is deprecated, use an alternative: " +
+            "Hint: " + get_deprecation_message(
                 completion_item.detail + "." + completion_item.insert_text
             ).strip()
             for completion_item in used_context
