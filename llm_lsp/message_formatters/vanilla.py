@@ -4,7 +4,7 @@ from typing import List, Dict, Any
 
 class VanillaMessageFormatter(MessageFormatter):
     def create_completion_messages(
-        self, initial_code: str, system_prompt_enabled: bool
+        self, initial_code: str, system_prompt_enabled: bool, instruction_text: str
     ) -> List[Dict[str, Any]]:
         system_prompt = "Return only the completion of the given function. Generate readable and simple code."
         user_prompt = f"Complete the following Python function. Return only code."

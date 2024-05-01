@@ -1,5 +1,5 @@
 from llm_lsp.interrupts import InterruptType
-from llm_lsp.prompt import Prompt
+from llm_lsp.prompt import Prompt, Comment
 from llm_lsp.code_utils import CodeUtil
 from typing import Any, Optional
 import importlib
@@ -7,7 +7,6 @@ import sys
 import json
 from typing import List
 from functools import lru_cache
-from llm_lsp.commentor import Comment, Lifetime, InsertedComment
 from lsprotocol.types import CompletionItemKind
 from llm_lsp.code_utils import CodeUtil
 
@@ -74,7 +73,7 @@ class CompletionInterrupt(InterruptType):
             return None
         used_context = [item for item in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
-        notes = ["Hint: Use one of the following to complete the variable: " + ", ".join([item.label for item in used_context])]
+        notes = ["Hint: Use one of the following to complete the variable: " + ", ".join([item.insert_text for item in used_context])]
         return Comment(
             comment="\n".join(notes),
             interrupt=COMPLETION_COMMENT_TYPE,

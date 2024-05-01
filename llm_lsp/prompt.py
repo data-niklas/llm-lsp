@@ -2,6 +2,13 @@ from jinja2 import TemplateError
 from typing import List, Dict, Any
 from transformers import AutoTokenizer
 from llm_lsp.message_formatters import MessageFormatter
+from dataclasses import dataclass
+
+@dataclass
+class Comment:
+    comment: str
+    interrupt: str
+    context: Any
 
 class Prompt:
     def __init__(self, tokenizer: AutoTokenizer, message_formatter: MessageFormatter, initial_text: str):
@@ -9,43 +16,33 @@ class Prompt:
         self.initial_text = initial_text
         self.message_formatter = message_formatter
         self.instructions = []
+        self._create_completion_prompt()
 
-    def init_completion_prompt(self):
+    def _create_completion_prompt(self):
         """Create a complete prompt with special tokens and ready to use for generation"""
+        i = "\n".join([c.comment + "." for c in self.instructions])
         try:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, True)
+            messages = self.message_formatter.create_completion_messages(self.initial_text, True, i)
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, False)
+            messages = self.message_formatter.create_completion_messages(self.initial_text, False, i)
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         self.initial_prompt = prompt
         self.code_prefix = self.initial_text
 
-    def init_prompt_with_instructions(self):
-        """Create a complete prompt with special tokens and ready to use for generation"""
-        i = " ".join([c.comment + "." for c in self.instructions])
-        try:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, True)
-            for message in messages:
-                if message["role"] == "user":
-                    message["content"] += ". " + i
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        # new_code is not part of the prompt, but part of the output
-        except TemplateError:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, False)
-            for message in messages:
-                if message["role"] == "user":
-                    message["content"] += ". " + i
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        self.initial_prompt = prompt
-        self.code_prefix = self.initial_text
 
     def add_comment(self, comment, name):
         self.instructions = [i for i in self.instructions if i.interrupt != name]
         if comment is not None:
             self.instructions.append(comment)
-        self.init_prompt_with_instructions() 
+        self._create_completion_prompt() 
+
+    def get_comment_of_interrupt(self, name):
+        results = [i for i in self.instructions if i.interrupt == name]
+        if len(results) == 0:
+            return None
+        return results[0]
 
     def wrap_in_code_block(self, code):
         # TODO: generalize the py

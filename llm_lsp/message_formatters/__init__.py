@@ -3,5 +3,5 @@ from abc import ABC, abstractmethod
 
 class MessageFormatter(ABC):
     @abstractmethod
-    def create_completion_messages(self, initial_code: str, system_prompt_enabled: bool) -> List[Dict[str, Any]]:
+    def create_completion_messages(self, initial_code: str, system_prompt_enabled: bool, instruction_text: str) -> List[Dict[str, Any]]:
         pass

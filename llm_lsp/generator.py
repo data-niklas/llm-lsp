@@ -22,7 +22,6 @@ from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
 from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.code_utils import CodeUtil
 from llm_lsp.code_utils.python import PythonCodeUtil
-from llm_lsp.commentor import Commentor, Comment
 from llm_lsp.generation_utils.beam_tracking import BeamTracker
 import torch.nn.functional as F
 import os
@@ -107,28 +106,6 @@ class Generator:
             return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=False)
         return self.tokenizer.decode(output_ids, skip_special_tokens=False)
 
-    def handle_completion_generation_result(
-        self, lsp_processor, interrupt_token_ids, output_ids
-    ):
-        interrupt_id, text = self.decode_tokens_with_maybe_interrupt(
-            interrupt_token_ids, output_ids
-        )
-        # + 1 is for newline added in the prompt creation
-        only_generated_code = self.prompt_util.get_whole_code(text)
-        if interrupt_id is None:
-            only_generated_code = remove_notes(only_generated_code)
-            # TODO: code_prefix for generate?
-            return True, self.prompt_util.initial_code + "\n" + only_generated_code
-        only_generated_code = remove_old_notes(only_generated_code)
-        interrupt = [
-            interrupt for interrupt in interrupts if interrupt.input_id == interrupt_id
-        ][0]
-        interrupt_callable = interrupt
-
-        prompt = interrupt.edit_generated_code_for_completion(
-            only_generated_code, context
-        )
-        return False, prompt
 
     def pad_input_ids(self, input_ids, edited_input_id):
         # TODO: try remove padding from start
@@ -204,36 +181,36 @@ class Generator:
                 **model_kwargs,
             )
 
-    def track_beam_selections(self, commentors, code_utils):
+    def track_beam_selections(self, prompt_utils, code_utils):
         """Beam indices for each batch. Access the selected beams using batch_index * batch_size + beam_index_in_batch
 
         Args:
             beam_indices (_type_): _description_
         """
         # TODO: add batching
-        new_commentors = []
+        new_prompt_utils = []
         new_codeutils = []
         indices = self.beam_tracker.get_final_beam_indices()
         a = None
         for i in range(len(indices)):
             index = indices[i]
-            commentor = commentors[index]
+            prompt_util = prompt_utils[index]
             code_util = code_utils[index]
-            parser = commentor.parser
-            del commentor.parser
-            tree = commentor.tree
-            del commentor.tree
-            commentor_copy = deepcopy(commentor)
-            commentor_copy.parser = parser
-            commentor.parser = parser
-            commentor_copy.tree = tree
-            commentor.tree = tree
-            new_commentors.append(commentor_copy)
+            #parser = prompt_util.parser
+            #del prompt_util.interr
+            #tree = prompt_util.tree
+            #del prompt_util.tree
+            prompt_util_copy = deepcopy(prompt_util)
+            #prompt_util_copy.parser = parser
+            #prompt_util.parser = parser
+            #prompt_util_copy.tree = tree
+            #prompt_util.tree = tree
+            new_prompt_utils.append(prompt_util_copy)
             new_codeutils.append(deepcopy(code_util))
 
         # Change in place
-        for i in range(len(commentors)):
-            commentors[i] = new_commentors[i]
+        for i in range(len(prompt_utils)):
+            prompt_utils[i] = new_prompt_utils[i]
             code_utils[i] = new_codeutils[i]
         a = None
 
@@ -258,7 +235,7 @@ class Generator:
         boundary_logits_processor,
         comments_logits_processor,
         config,
-        commentors,
+        prompt_utils,
         code_utils
     ):
         """
@@ -291,7 +268,7 @@ class Generator:
             logits_guider.interrupt.input_ids = beam_input_ids
 
         if self.beam_tracker.is_beam_search():
-            self.track_beam_selections(commentors, code_utils)
+            self.track_beam_selections(prompt_utils, code_utils)
         # TODO: Check if this is always zero, as the top beam (the one with eos) might be at the "top" with index 0
 
         last_token_ids = generated_sequences[0]
@@ -307,16 +284,12 @@ class Generator:
         ][0]
 
     def edit_generation_text_for_completion(
-        self, decoded_text, prompt_util, interrupt, commentor, code_util
+        self, decoded_text, prompt_util, interrupt, code_util
     ):
         generated_code = prompt_util.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
-        generated_code = commentor.remove_old_comments(generated_code, interrupt_type.type_name())
         comment = interrupt_type.create_comment(interrupt.interrupt_context, code_util)
-
-        if comment is not None:
-            generated_code = commentor.insert_comment(generated_code, comment)
-        #prompt_util.add_comment(comment, interrupt_type.type_name())
+        prompt_util.add_comment(comment, interrupt_type.type_name())
         edited_prompt = prompt_util.format(generated_code)
         return edited_prompt
 
@@ -329,9 +302,9 @@ class Generator:
         input_ids[interrupt_beam_index] = edited_input_ids
         return input_ids
 
-    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size, commentors):
+    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
         return LspLogitsProcessor(
-            self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.beam_tracker, commentors, self.disabled
+            self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.beam_tracker, self.disabled
         )
 
     def create_boundary_logits_processor(self):
@@ -357,20 +330,18 @@ class Generator:
         beam_size = config["num_beams"] if "num_beams" in config else 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
-        prompt_util = Prompt(self.tokenizer, self.message_formatter, code)
-        prompt_util.init_completion_prompt()
-        prompt = prompt_util.format(code)
+        prompt_utils = [Prompt(self.tokenizer, self.message_formatter, code) for i in range(batch_size * beam_size)]
+        prompt = prompt_utils[0].format(code)
 
         parser = Parser()
         parser.set_language(PY_LANGUAGE)
         # NOTE: They need to be stored per beam, as each beam may have different comments, AND THEY NEED TO BE SHUFFLED ACCORDING TO THE SELECTED BEAMS IN THE BEAMSEARCHSCORER
         code_utils = [PythonCodeUtil() for i in range(batch_size * beam_size)]
-        commentors = [Commentor(code_utils[i], parser) for i in range(batch_size * beam_size)]
 
         start_timestamp = time.time()
         config = self.fix_config(config, prompt)
         logits_guider = self.create_lsp_logits_processor(
-            [lsp], [prompt_util], [filename], beam_size, commentors
+            [lsp], prompt_utils, [filename], beam_size
         )
         boundary_logits_processor = self.create_boundary_logits_processor()
         comments_logits_processor = self.create_comments_logits_processor()
@@ -386,20 +357,19 @@ class Generator:
                 boundary_logits_processor,
                 comments_logits_processor,
                 config,
-                commentors,
+                prompt_utils,
                 code_utils,
             )
             interrupt = logits_guider.interrupt
             if interrupt is None:
+                prompt_util = prompt_utils[0]
                 result_code = prompt_util.get_whole_code(decoded_text)
-                commentor = commentors[0]
-                result_code = commentor.remove_all_comments(result_code)
                 return result_code[len(prompt_util.initial_text) :]
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
-            commentor = commentors[stopped_beam_index]
+            prompt_util = prompt_utils[stopped_beam_index]
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
-                decoded_text, prompt_util, interrupt, commentor, code_util
+                decoded_text, prompt_util, interrupt, code_util
             )
             input_ids = self.edit_input_ids(
                 interrupt, edited_prompt, stopped_beam_index

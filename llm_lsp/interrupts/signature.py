@@ -1,6 +1,5 @@
 from llm_lsp.interrupts import InterruptType
-from llm_lsp.prompt import Prompt
-from llm_lsp.commentor import Comment, Lifetime, InsertedComment
+from llm_lsp.prompt import Prompt, Comment
 from tree_sitter import Tree
 from typing import Any, Optional
 from llm_lsp.code_utils import CodeUtil

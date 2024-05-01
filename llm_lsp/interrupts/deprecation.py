@@ -1,5 +1,5 @@
 from llm_lsp.interrupts import InterruptType
-from llm_lsp.prompt import Prompt
+from llm_lsp.prompt import Prompt, Comment
 from llm_lsp.code_utils import CodeUtil
 from typing import Any, Optional
 import importlib
@@ -7,7 +7,6 @@ import sys
 import json
 from typing import List
 from functools import lru_cache
-from llm_lsp.commentor import Comment, Lifetime, InsertedComment
 
 
 

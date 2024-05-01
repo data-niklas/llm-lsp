@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 from typing import Callable, Any, Optional
 from abc import ABC, abstractmethod
-from llm_lsp.prompt import Prompt
+from llm_lsp.prompt import Prompt, Comment
 from transformers import StoppingCriteria
 from torch import Tensor
-from llm_lsp.commentor import Comment
 from llm_lsp.code_utils import CodeUtil
 
 class InterruptStoppingCriteria(StoppingCriteria):

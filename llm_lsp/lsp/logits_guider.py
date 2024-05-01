@@ -81,7 +81,6 @@ class LspLogitsProcessor(LogitsProcessor):
         filenames,
         expand_size,
         beam_tracker,
-        commentors,
         disabled,
     ):
         self.tokenizer: PreTrainedTokenizer = tokenizer
@@ -92,7 +91,6 @@ class LspLogitsProcessor(LogitsProcessor):
         self.expand_size = expand_size
         self.interrupt = None
         self.beam_tracker = beam_tracker
-        self.commentors = commentors
         self.disabled = disabled
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
@@ -105,7 +103,10 @@ class LspLogitsProcessor(LogitsProcessor):
     def current_code(self, i, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
-        code = self.prompt_utils[i // self.expand_size].get_whole_code(
+        prompt_util_index = i
+        if self.beam_tracker.is_beam_search():
+            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
+        code = self.prompt_utils[prompt_util_index].get_whole_code(
             generated_code_with_prompt
         )
         return code
@@ -248,11 +249,11 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         if len(deprecated_completions) == 0:
             return True
-        commentor_index = i
+        prompt_util_index = i
         if self.beam_tracker.is_beam_search():
-            commentor_index = self.beam_tracker.get_final_beam_indices()[i]
-        commentor = self.commentors[commentor_index]
-        comment = commentor.get_comment_of_interrupt(DEPRECATION_COMMENT_TYPE)
+            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_util = self.prompt_utils[prompt_util_index]
+        comment = prompt_util.get_comment_of_interrupt(DEPRECATION_COMMENT_TYPE)
         if comment is None:
             return False
         # TODO: check if comment actually in line before
@@ -263,38 +264,35 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         #        if len(completions) < 4:
         #            return True
-        commentor_index = i
+        prompt_util_index = i
         if self.beam_tracker.is_beam_search():
-            commentor_index = self.beam_tracker.get_final_beam_indices()[i]
-        commentor = self.commentors[commentor_index]
-        comment = commentor.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
+            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_util = self.prompt_utils[prompt_util_index]
+        comment = prompt_util.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
             if len(completions) == 0:
                 return True
             return False
         code_lines = current_code.splitlines()
-        # TODO: check if comment actually in line before
         last_code_line = code_lines[-1]
         return eq_completions_items(completions, comment.context)
-        # return len(last_code_line) - len(trigger_phrase) == comment.target_column
 
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
     ):
-        if signature_help is None:  # or len(signature_help.signatures) == 0:
+        if signature_help is None or len(signature_help.signatures) == 0:
             return True
-        commentor_index = i
+        prompt_util_index = i
         if self.beam_tracker.is_beam_search():
-            commentor_index = self.beam_tracker.get_final_beam_indices()[i]
-        commentor = self.commentors[commentor_index]
-        comment = commentor.get_comment_of_interrupt(SIGNATURE_COMMENT_TYPE)
+            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_util = self.prompt_utils[prompt_util_index]
+        comment = prompt_util.get_comment_of_interrupt(SIGNATURE_COMMENT_TYPE)
         if comment is None:
             if len(signature_help.signatures) == 0:
                 return True
             return False
 
         return eq_signature_help(signature_help, comment.context)
-        # return len(last_code_line) - len(trigger_phrase) == comment.target_column
 
     def should_complete(self, code):
         symbols = [")", "\n", " ", "\t", "]", "}"]
@@ -396,10 +394,10 @@ class LspLogitsProcessor(LogitsProcessor):
                 i, trigger_phrase, current_code, deprecated_completions
             ):
                 self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
-            #if not self.check_signature_documentation_included(
-            #    i, trigger_phrase, current_code, signature_help
-            #):
-            #    self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
+            if not self.check_signature_documentation_included(
+                i, trigger_phrase, current_code, signature_help
+            ):
+                self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
                 # TODO: do not interrupt on stdlib stuff
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
             # for each completion text, compare to trigger_phrase and get the next few characters
