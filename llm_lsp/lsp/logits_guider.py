@@ -280,7 +280,7 @@ class LspLogitsProcessor(LogitsProcessor):
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
     ):
-        if signature_help is None or len(signature_help.signatures) == 0:
+        if signature_help is None:# or len(signature_help.signatures) == 0:
             return True
         prompt_util_index = i
         if self.beam_tracker.is_beam_search():

@@ -221,7 +221,8 @@ class HumanModel(PreTrainedModel):
 
         # init attention / hidden states / scores tuples
         scores = () if (return_dict_in_generate and output_scores) else None
-
+        from time import sleep
+        #sleep(0.1)
         while True:
             next_token_logits = torch.zeros([batch_size, self.tok.vocab_size])
             text = self.tok.decode(input_ids[0])

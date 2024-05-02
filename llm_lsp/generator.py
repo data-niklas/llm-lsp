@@ -96,6 +96,11 @@ class Generator:
         index = (tokens != token_id).nonzero()[0].item()
         return tokens[index:]
 
+    def remove_nd_padding(self, tokens):
+        token_id = self.tokenizer.pad_token_id
+        index = (tokens != token_id).nonzero()[0,-1].item()
+        return tokens[:, index:]
+
     def decode_tokens_remove_interrupt(self, interrupt_token_ids, output_ids):
         if output_ids[-1] in interrupt_token_ids:
             tokens = output_ids[:-1]
@@ -108,8 +113,6 @@ class Generator:
 
 
     def pad_input_ids(self, input_ids, edited_input_id):
-        # TODO: try remove padding from start
-        # TODO: Allow truncation
         pad_token_id = self.tokenizer.pad_token_id
         edited_len = edited_input_id.shape[1]
         inputs_len = input_ids.shape[1]
@@ -298,8 +301,12 @@ class Generator:
             edited_prompt, return_tensors="pt", add_special_tokens=False
         ).input_ids
         input_ids = interrupt.input_ids
-        input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
-        input_ids[interrupt_beam_index] = edited_input_ids
+        input_ids = self.remove_nd_padding(input_ids)
+        if input_ids.shape[0] > 1:
+            input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
+            input_ids[interrupt_beam_index] = edited_input_ids
+        else:
+            input_ids = edited_input_ids
         return input_ids
 
     def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
