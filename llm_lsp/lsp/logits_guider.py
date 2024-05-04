@@ -388,7 +388,7 @@ class LspLogitsProcessor(LogitsProcessor):
             (
                 non_deprecated_completions,
                 deprecated_completions,
-            ) = self.split_deprecated_completions(filtered_completions)
+                    ) = self.split_deprecated_completions(filtered_completions)
             if not self.check_completion_documentation_included(
                 i, trigger_phrase, current_code, non_deprecated_completions
             ):

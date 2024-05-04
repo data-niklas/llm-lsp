@@ -271,7 +271,9 @@ class Generator:
 
         if "beam_input_ids" in generated_result and logits_guider.interrupt is not None:
             beam_input_ids = generated_result["beam_input_ids"]
-            logits_guider.interrupt.input_ids = beam_input_ids
+            # Remove the last token to fix top-k logits warper selecting nonsensical tokens
+            # This bug occurs when the interrupted beam selects an interrupt token with a high logits value and top-k samples from all other tokens randomly
+            logits_guider.interrupt.input_ids = beam_input_ids[:,:-1]
 
         if self.beam_tracker.is_beam_search():
             self.track_beam_selections(prompt_utils, code_utils)
