@@ -110,7 +110,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/pytorch_2.py")
+    parser.add_argument("-f", "--file", default="tests/rich.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     parser.add_argument("-s", "--strategy", default="COMPLETE")

@@ -214,7 +214,8 @@ class LspLogitsProcessor(LogitsProcessor):
         return scores
 
     def filter_uri(self, completions, uri):
-        return [c for c in completions if not uri.endswith(c.detail)]
+        uri_name = uri.split("/")[-1]
+        return [c for c in completions if not c.detail.startswith(uri_name)]
 
     def filter_completions_by_postfix(self, trigger_phrase: str, completions):
         return [
@@ -262,6 +263,8 @@ class LspLogitsProcessor(LogitsProcessor):
     def check_completion_documentation_included(
         self, i: int, trigger_phrase: str, current_code: str, completions
     ):
+        if len(completions) == 0:
+            return True
         #        if len(completions) < 4:
         #            return True
         prompt_util_index = i
@@ -270,8 +273,8 @@ class LspLogitsProcessor(LogitsProcessor):
         prompt_util = self.prompt_utils[prompt_util_index]
         comment = prompt_util.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
-            if len(completions) == 0:
-                return True
+            #if len(completions) == 0:
+            #    return True
             return False
         code_lines = current_code.splitlines()
         last_code_line = code_lines[-1]
@@ -386,10 +389,10 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            #if not self.check_completion_documentation_included(
-            #    i, trigger_phrase, current_code, non_deprecated_completions
-            #):
-            #    self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
+            if not self.check_completion_documentation_included(
+                i, trigger_phrase, current_code, non_deprecated_completions
+            ):
+                self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
             if not self.check_deprecation_documentation_included(
                 i, trigger_phrase, current_code, deprecated_completions
             ):

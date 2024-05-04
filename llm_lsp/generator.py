@@ -98,7 +98,7 @@ class Generator:
 
     def remove_nd_padding(self, tokens):
         token_id = self.tokenizer.pad_token_id
-        index = (tokens != token_id).nonzero()[0,-1].item()
+        index = (tokens != token_id).nonzero()[:,-1].min().item()
         return tokens[:, index:]
 
     def decode_tokens_remove_interrupt(self, interrupt_token_ids, output_ids):

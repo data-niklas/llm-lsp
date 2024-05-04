@@ -17,8 +17,8 @@ GLOBAL_CONFIGURATION = {
     #"return_full_text": False,
     #"max_new_tokens": 2048,
     "max_new_tokens": 5048,
-    #"repetition_penalty": 1.3
-    "repetition_penalty": 1.18
+    "repetition_penalty": 1.3
+    #"repetition_penalty": 1.18
 
 }
 
