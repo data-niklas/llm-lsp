@@ -398,7 +398,6 @@ class LspLogitsProcessor(LogitsProcessor):
                 i, trigger_phrase, current_code, signature_help
             ):
                 self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
-                # TODO: do not interrupt on stdlib stuff
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
             # for each completion text, compare to trigger_phrase and get the next few characters
             # add the characters to the current_code to get the next tokens

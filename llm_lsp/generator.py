@@ -251,6 +251,9 @@ class Generator:
         if "pad_token_id" not in config:
             kwargs["pad_token_id"] = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
         
+        if self.beam_tracker.is_beam_search():
+            # Needed because logits processor is called before the process method in which the beam arrangements are tracked
+            self.beam_tracker.reset()
 
         generated_result = resume(
             self.model,
@@ -301,12 +304,12 @@ class Generator:
             edited_prompt, return_tensors="pt", add_special_tokens=False
         ).input_ids
         input_ids = interrupt.input_ids
-        input_ids = self.remove_nd_padding(input_ids)
         if input_ids.shape[0] > 1:
             input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
             input_ids[interrupt_beam_index] = edited_input_ids
         else:
             input_ids = edited_input_ids
+        input_ids = self.remove_nd_padding(input_ids)
         return input_ids
 
     def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
