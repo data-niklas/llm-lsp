@@ -235,6 +235,34 @@ class LspLogitsProcessor(LogitsProcessor):
             )
         ]
 
+    def filter_completions_by_next_token(self, completions, scores):
+        if len(completions) == 0:
+            return []
+        scores = scores[None,:]
+        top_p = 0.95
+        top_k = 5
+        min_tokens_to_keep = 1
+        filter_value = -float("Inf")
+        sorted_logits, sorted_indices = torch.sort(scores, descending=False)
+        cumulative_probs = sorted_logits.softmax(dim=-1).cumsum(dim=-1)
+
+        # Remove tokens with cumulative top_p above the threshold (token with 0 are kept)
+        sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
+        # Keep at least min_tokens_to_keep
+        sorted_indices_to_remove[..., -min_tokens_to_keep :] = 0
+
+        # scatter sorted tensors to original indexing
+        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+        scores_processed = scores.masked_fill(indices_to_remove, filter_value)
+        probs = torch.nn.functional.softmax(scores_processed, dim=-1)
+        next_tokens = torch.topk(probs, top_k)[1][0]
+        next_texts = self.tokenizer.convert_ids_to_tokens(next_tokens)
+        def is_relevant(completion):
+            completion_text = self.completion_text(completion)
+            return any([completion_text.startswith(n) for n in next_texts])
+        return [completion for completion in completions if is_relevant(completion)]
+
+
     def filter_builtin_signatures(self, signatures):
         def is_builtin(signature):
             keyword = self.get_signature_keyword(signature)
@@ -388,7 +416,8 @@ class LspLogitsProcessor(LogitsProcessor):
             (
                 non_deprecated_completions,
                 deprecated_completions,
-                    ) = self.split_deprecated_completions(filtered_completions)
+            ) = self.split_deprecated_completions(filtered_completions)
+            deprecated_completions = self.filter_completions_by_next_token(deprecated_completions, scores)
             #if not self.check_completion_documentation_included(
             #    i, trigger_phrase, current_code, non_deprecated_completions
             #):
