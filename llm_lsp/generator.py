@@ -339,6 +339,9 @@ class Generator:
     async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
         batch_size = 1
         config = self.generation_config.copy()
+        max_interrupts = config["max_interrupts"] if "max_interrupts" in config else None
+        if max_interrupts is not None:
+            del config["max_interrupts"]
         beam_size = config["num_beams"] if "num_beams" in config else 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
@@ -379,6 +382,11 @@ class Generator:
                 return result_code[len(prompt_util.initial_text) :]
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
             prompt_util = prompt_utils[stopped_beam_index]
+            if max_interrupts is not None:
+                if max_interrupts == 0:
+                    result_code = prompt_util.get_whole_code(decoded_text)
+                    return result_code[len(prompt_util.initial_text) :]
+                max_interrupts = max_interrupts - 1
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
                 decoded_text, prompt_util, interrupt, code_util
@@ -393,3 +401,6 @@ class Generator:
                 time_for_iteration = current_timestamp - start_timestamp
                 config["max_time"] -= time_for_iteration
                 start_timestamp = current_timestamp
+                if config["max_time"] < 0:
+                    result_code = prompt_util.get_whole_code(decoded_text)
+                    return result_code[len(prompt_util.initial_text) :]
