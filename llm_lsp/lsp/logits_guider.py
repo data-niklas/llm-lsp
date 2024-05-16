@@ -365,7 +365,7 @@ class LspLogitsProcessor(LogitsProcessor):
             relevant_completions = [
                 completion
                 for completion in completions
-                if self.get_completion_text(completion) == keyword
+                if self.completion_text(completion) == keyword
             ]
             if len(relevant_completions) == 0:
                 continue
