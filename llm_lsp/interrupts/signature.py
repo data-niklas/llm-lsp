@@ -39,5 +39,5 @@ class SignatureInterrupt(InterruptType):
             comment += "\nThe code item has the following documentation:\n\t" + documentation.replace("\n", "\n\t")
         #comment += "\nOnly provide necessary arguments. Provide positional arguments without name."# and omit default argument values."
         #comment += "\nFirst provide necessary positional arguments. Then provide necessary named arguments with non-default values. Often times the default values of named arguments are sufficient and may be omitted."
-        comment += "\n\tProvide as few arguments as possible and as many as needed. Provide arguments as positional arguments instead of as named arguments if possible. Often times optional arguments can be omitted."
+        comment += "\nProvide as few arguments as possible and as many as needed. Provide arguments as positional arguments instead of as named arguments if possible. Often times optional arguments can be omitted"
         return Comment(comment=comment, interrupt=SIGNATURE_COMMENT_TYPE, context=signature_help)

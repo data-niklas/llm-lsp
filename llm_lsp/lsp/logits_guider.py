@@ -134,6 +134,13 @@ class LspLogitsProcessor(LogitsProcessor):
             completion for completion in completions if completion.detail != "builtins"
         ]
 
+    def filter_signatures_without_parameters(self, completions):
+        return [
+            completion
+            for completion in completions
+            if completion.parameters is not None
+        ]
+
     def filter_completions_by_case(self, trigger_phrase: str, completions):
         """Remove already completed completions"""
         # rsplit
@@ -238,7 +245,7 @@ class LspLogitsProcessor(LogitsProcessor):
     def filter_completions_by_next_token(self, completions, scores):
         if len(completions) == 0:
             return []
-        scores = scores[None,:]
+        scores = scores[None, :]
         top_p = 0.95
         top_k = 5
         min_tokens_to_keep = 1
@@ -249,19 +256,22 @@ class LspLogitsProcessor(LogitsProcessor):
         # Remove tokens with cumulative top_p above the threshold (token with 0 are kept)
         sorted_indices_to_remove = cumulative_probs <= (1 - top_p)
         # Keep at least min_tokens_to_keep
-        sorted_indices_to_remove[..., -min_tokens_to_keep :] = 0
+        sorted_indices_to_remove[..., -min_tokens_to_keep:] = 0
 
         # scatter sorted tensors to original indexing
-        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+        indices_to_remove = sorted_indices_to_remove.scatter(
+            1, sorted_indices, sorted_indices_to_remove
+        )
         scores_processed = scores.masked_fill(indices_to_remove, filter_value)
         probs = torch.nn.functional.softmax(scores_processed, dim=-1)
         next_tokens = torch.topk(probs, top_k)[1][0]
         next_texts = self.tokenizer.convert_ids_to_tokens(next_tokens)
+
         def is_relevant(completion):
             completion_text = self.completion_text(completion)
             return any([completion_text.startswith(n) for n in next_texts])
-        return [completion for completion in completions if is_relevant(completion)]
 
+        return [completion for completion in completions if is_relevant(completion)]
 
     def filter_builtin_signatures(self, signatures):
         def is_builtin(signature):
@@ -301,7 +311,7 @@ class LspLogitsProcessor(LogitsProcessor):
         prompt_util = self.prompt_utils[prompt_util_index]
         comment = prompt_util.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
-            #if len(completions) == 0:
+            # if len(completions) == 0:
             #    return True
             return False
         code_lines = current_code.splitlines()
@@ -311,7 +321,7 @@ class LspLogitsProcessor(LogitsProcessor):
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
     ):
-        if signature_help is None:# or len(signature_help.signatures) == 0:
+        if signature_help is None:  # or len(signature_help.signatures) == 0:
             return True
         prompt_util_index = i
         if self.beam_tracker.is_beam_search():
@@ -394,8 +404,8 @@ class LspLogitsProcessor(LogitsProcessor):
             trigger_phrase = re.search(r"[A-Za-z_]*$", current_code).group(0)
             signature_help = lsp_code_file.ask_signature()
             self.increase_signature_cache(signature_help, completions)
-            signature_help.signatures = self.filter_builtin_signatures(
-                signature_help.signatures
+            signature_help.signatures = self.filter_signatures_without_parameters(
+                self.filter_builtin_signatures(signature_help.signatures)
             )
             filtered_completions = self.filter_uri(
                 self.filter_misc(
@@ -417,10 +427,12 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_completions,
                 deprecated_completions,
             ) = self.split_deprecated_completions(filtered_completions)
-            deprecated_completions = self.filter_completions_by_next_token(deprecated_completions, scores)
-            #if not self.check_completion_documentation_included(
+            deprecated_completions = self.filter_completions_by_next_token(
+                deprecated_completions, scores
+            )
+            # if not self.check_completion_documentation_included(
             #    i, trigger_phrase, current_code, non_deprecated_completions
-            #):
+            # ):
             #    self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
             if not self.check_deprecation_documentation_included(
                 i, trigger_phrase, current_code, deprecated_completions
