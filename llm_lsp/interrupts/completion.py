@@ -73,7 +73,7 @@ class CompletionInterrupt(InterruptType):
             return None
         used_context = [item for item in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
-        notes = ["Hint: Use one of the following to complete the variable: " + ", ".join([item.insert_text for item in used_context])]
+        notes = ["Hint: The following symbols are code completion entries. Use the appropriate symbol to complete the current code: " + ", ".join([item.insert_text for item in used_context])]
         return Comment(
             comment="\n".join(notes),
             interrupt=COMPLETION_COMMENT_TYPE,

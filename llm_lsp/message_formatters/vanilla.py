@@ -15,3 +15,6 @@ class VanillaMessageFormatter(MessageFormatter):
                 {"role": "user", "content": user_prompt},
             ]
         return [{"role": "user", "content": user_prompt}]
+
+    def create_completion_chooser_message(self, wrapped_current_code: str, system_prompt_enabled: bool, completions) -> List[Dict[str, Any]]:
+        pass

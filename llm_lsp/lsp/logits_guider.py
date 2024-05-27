@@ -59,6 +59,12 @@ def eq_completions_items(a, b):
     return True
 
 
+def in_completion_items(a, b):
+    a = set([x.label for x in a])
+    b = set([x.label for x in b])
+    return a <= b
+
+
 def eq_signature_help(a, b):
     a = a.signatures
     b = b.signatures
@@ -301,8 +307,8 @@ class LspLogitsProcessor(LogitsProcessor):
     def check_completion_documentation_included(
         self, i: int, trigger_phrase: str, current_code: str, completions
     ):
-        if len(completions) == 0:
-            return True
+        # if len(completions) == 0:
+        #    return True
         #        if len(completions) < 4:
         #            return True
         prompt_util_index = i
@@ -311,12 +317,14 @@ class LspLogitsProcessor(LogitsProcessor):
         prompt_util = self.prompt_utils[prompt_util_index]
         comment = prompt_util.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
-            # if len(completions) == 0:
-            #    return True
+            if len(completions) == 0:
+                return True
             return False
         code_lines = current_code.splitlines()
         last_code_line = code_lines[-1]
-        return eq_completions_items(completions, comment.context)
+        return eq_completions_items(
+            completions, comment.context
+        ) or in_completion_items(completions, comment.context)
 
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
@@ -430,10 +438,22 @@ class LspLogitsProcessor(LogitsProcessor):
             deprecated_completions = self.filter_completions_by_next_token(
                 deprecated_completions, scores
             )
-            # if not self.check_completion_documentation_included(
-            #    i, trigger_phrase, current_code, non_deprecated_completions
-            # ):
-            #    self.trigger_interrupt(non_deprecated_completions, COMPLETION_TOKEN_ID)
+            if not self.check_completion_documentation_included(
+                i, trigger_phrase, current_code, non_deprecated_completions
+            ):
+                if len(non_deprecated_completions) != 1 and (
+                    not non_deprecated_completions[0].insert_text.startswith(
+                        trigger_phrase
+                    )
+                    or trigger_phrase == ""
+                ):
+                    self.trigger_interrupt(
+                        {
+                            "comp": non_deprecated_completions,
+                            "dep": deprecated_completions,
+                        },
+                        COMPLETION_TOKEN_ID,
+                    )
             if not self.check_deprecation_documentation_included(
                 i, trigger_phrase, current_code, deprecated_completions
             ):

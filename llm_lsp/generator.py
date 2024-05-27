@@ -3,6 +3,7 @@ from transformers.generation import GenerationMode, GenerationConfig
 import warnings
 from tree_sitter import Language, Parser
 import tree_sitter_python
+
 PY_LANGUAGE = Language(tree_sitter_python.language(), "python")
 # from llm_lsp.lsp_client import LspClient
 from typing import Dict, Any, Optional, List
@@ -12,9 +13,12 @@ from llm_lsp.message_formatters.default import DefaultMessageFormatter
 from llm_lsp.message_formatters.vanilla import VanillaMessageFormatter
 from pygls.lsp.client import BaseLanguageClient
 from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
-from llm_lsp.interrupts.deprecation import DeprecationInterrupt
+from llm_lsp.interrupts.deprecation import DeprecationInterrupt, TOKEN_ID as DEPRECATION_TOKEN_ID
 from llm_lsp.interrupts.signature import SignatureInterrupt
-from llm_lsp.interrupts.completion import CompletionInterrupt
+from llm_lsp.interrupts.completion import (
+    CompletionInterrupt,
+    TOKEN_ID as COMPLETION_TOKEN_ID,
+)
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
 from llm_lsp.lsp.logits_guider import LspLogitsProcessor
@@ -31,7 +35,11 @@ from copy import deepcopy
 import copy
 import time
 
-DEFAULT_INTERRUPTS = [DeprecationInterrupt(), SignatureInterrupt(), CompletionInterrupt()]
+DEFAULT_INTERRUPTS = [
+    DeprecationInterrupt(),
+    SignatureInterrupt(),
+    CompletionInterrupt(),
+]
 
 PAD_TOKEN = "[PAD]"
 
@@ -98,7 +106,7 @@ class Generator:
 
     def remove_nd_padding(self, tokens):
         token_id = self.tokenizer.pad_token_id
-        index = (tokens != token_id).nonzero()[:,-1].min().item()
+        index = (tokens != token_id).nonzero()[:, -1].min().item()
         return tokens[:, index:]
 
     def decode_tokens_remove_interrupt(self, interrupt_token_ids, output_ids):
@@ -110,7 +118,6 @@ class Generator:
         if output_ids[-1] in interrupt_token_ids:
             return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=False)
         return self.tokenizer.decode(output_ids, skip_special_tokens=False)
-
 
     def pad_input_ids(self, input_ids, edited_input_id):
         pad_token_id = self.tokenizer.pad_token_id
@@ -199,15 +206,7 @@ class Generator:
             index = indices[i]
             prompt_util = prompt_utils[index]
             code_util = code_utils[index]
-            #parser = prompt_util.parser
-            #del prompt_util.interr
-            #tree = prompt_util.tree
-            #del prompt_util.tree
             prompt_util_copy = deepcopy(prompt_util)
-            #prompt_util_copy.parser = parser
-            #prompt_util.parser = parser
-            #prompt_util_copy.tree = tree
-            #prompt_util.tree = tree
             new_prompt_utils.append(prompt_util_copy)
             new_codeutils.append(deepcopy(code_util))
 
@@ -239,18 +238,24 @@ class Generator:
         comments_logits_processor,
         config,
         prompt_utils,
-        code_utils
+        code_utils,
     ):
         """
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
-        logits_processor = [logits_guider, boundary_logits_processor, comments_logits_processor]
-        #logits_processor = [logits_guider, comments_logits_processor]
+        logits_processor = [
+            logits_guider,
+            boundary_logits_processor,
+            comments_logits_processor,
+        ]
+        # logits_processor = [logits_guider, comments_logits_processor]
         kwargs = {}
         if "pad_token_id" not in config:
-            kwargs["pad_token_id"] = self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
-        
+            kwargs["pad_token_id"] = (
+                self.tokenizer.pad_token_id or self.tokenizer.eos_token_id
+            )
+
         if self.beam_tracker.is_beam_search():
             # Needed because logits processor is called before the process method in which the beam arrangements are tracked
             self.beam_tracker.reset()
@@ -273,7 +278,7 @@ class Generator:
             beam_input_ids = generated_result["beam_input_ids"]
             # Remove the last token to fix top-k logits warper selecting nonsensical tokens
             # This bug occurs when the interrupted beam selects an interrupt token with a high logits value and top-k samples from all other tokens randomly
-            logits_guider.interrupt.input_ids = beam_input_ids[:,:-1]
+            logits_guider.interrupt.input_ids = beam_input_ids[:, :-1]
 
         if self.beam_tracker.is_beam_search():
             self.track_beam_selections(prompt_utils, code_utils)
@@ -291,13 +296,57 @@ class Generator:
             i for i in self.interrupts if i.input_id == interrupt.interrupt_token_id
         ][0]
 
+    def determine_next_symbol_from_completions(
+        self,
+        completions,
+        deprecation_text,
+        message_formatter: MessageFormatter,
+        code_util: CodeUtil,
+        code,
+    ):
+        wrapped_code = code_util.wrap_in_code_block(code)
+        messages = message_formatter.create_completion_chooser_message(
+            wrapped_code, False, completions, deprecation_text
+        )
+        prompt = self.tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        prompt += "`"
+        input_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
+        generation_result = self.model.generate(
+            input_ids, use_cache=True, **self.generation_config
+        )
+        generation_text = self.tokenizer.decode(
+            generation_result[0][len(input_ids[0]) :], skip_special_tokens=True
+        )
+        if generation_text.endswith("`"):
+            return generation_text.split("`")[0]
+        return ""
+
     def edit_generation_text_for_completion(
         self, decoded_text, prompt_util, interrupt, code_util
     ):
         generated_code = prompt_util.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
-        comment = interrupt_type.create_comment(interrupt.interrupt_context, code_util)
-        prompt_util.add_comment(comment, interrupt_type.type_name())
+        if interrupt_type.token == COMPLETION_TOKEN_ID:
+            dep_interrupt_type = [
+                i for i in self.interrupts if i.input_id == self.tokenizer.convert_tokens_to_ids(DEPRECATION_TOKEN_ID)
+            ][0]
+            comment = dep_interrupt_type.create_comment(
+                interrupt.interrupt_context["dep"], code_util
+            )
+            generated_code += self.determine_next_symbol_from_completions(
+                interrupt.interrupt_context["comp"],
+                comment,
+                prompt_util.message_formatter,
+                code_util,
+                generated_code,
+            )
+        else:
+            comment = interrupt_type.create_comment(
+                interrupt.interrupt_context, code_util
+            )
+            prompt_util.add_comment(comment, interrupt_type.type_name())
         edited_prompt = prompt_util.format(generated_code)
         return edited_prompt
 
@@ -307,7 +356,9 @@ class Generator:
         ).input_ids
         input_ids = interrupt.input_ids
         if input_ids.shape[0] > 1:
-            input_ids, edited_input_ids = self.pad_input_ids(input_ids, edited_input_ids)
+            input_ids, edited_input_ids = self.pad_input_ids(
+                input_ids, edited_input_ids
+            )
             input_ids[interrupt_beam_index] = edited_input_ids
         else:
             input_ids = edited_input_ids
@@ -316,12 +367,18 @@ class Generator:
 
     def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
         return LspLogitsProcessor(
-            self.tokenizer, lsps, prompt_utils, filenames, expand_size, self.beam_tracker, self.disabled
+            self.tokenizer,
+            lsps,
+            prompt_utils,
+            filenames,
+            expand_size,
+            self.beam_tracker,
+            self.disabled,
         )
 
     def create_boundary_logits_processor(self):
         return BoundaryLogitsProcessor(self.tokenizer, [".", "("], self.disabled)
-    
+
     def create_comments_logits_processor(self):
         return CommentsLogitsProcessor(self.tokenizer, self.disabled)
 
@@ -339,13 +396,18 @@ class Generator:
     async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
         batch_size = 1
         config = self.generation_config.copy()
-        max_interrupts = config["max_interrupts"] if "max_interrupts" in config else None
+        max_interrupts = (
+            config["max_interrupts"] if "max_interrupts" in config else None
+        )
         if max_interrupts is not None:
             del config["max_interrupts"]
         beam_size = config["num_beams"] if "num_beams" in config else 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
-        prompt_utils = [Prompt(self.tokenizer, self.message_formatter, code) for i in range(batch_size * beam_size)]
+        prompt_utils = [
+            Prompt(self.tokenizer, self.message_formatter, code)
+            for i in range(batch_size * beam_size)
+        ]
         prompt = prompt_utils[0].format(code)
 
         parser = Parser()
