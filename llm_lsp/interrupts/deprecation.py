@@ -54,14 +54,13 @@ def is_deprecated(item):
     return hasattr(variable, "__deprecated__")
 
 
-TOKEN_ID = "[DEPRECATION_INTERRUPT]"
 DEPRECATION_COMMENT_TYPE = "deprecation"
 
 
 
 class DeprecationInterrupt(InterruptType):
     def __init__(self):
-        super().__init__(TOKEN_ID)
+        super().__init__()
 
     def type_name(self) -> str:
         return DEPRECATION_COMMENT_TYPE

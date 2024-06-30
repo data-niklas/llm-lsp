@@ -13,11 +13,10 @@ from llm_lsp.message_formatters.default import DefaultMessageFormatter
 from llm_lsp.message_formatters.vanilla import VanillaMessageFormatter
 from pygls.lsp.client import BaseLanguageClient
 from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
-from llm_lsp.interrupts.deprecation import DeprecationInterrupt, TOKEN_ID as DEPRECATION_TOKEN_ID
-from llm_lsp.interrupts.signature import SignatureInterrupt
+from llm_lsp.interrupts.deprecation import DeprecationInterrupt, DEPRECATION_COMMENT_TYPE
+from llm_lsp.interrupts.signature import SignatureInterrupt, SIGNATURE_COMMENT_TYPE
 from llm_lsp.interrupts.completion import (
-    CompletionInterrupt,
-    TOKEN_ID as COMPLETION_TOKEN_ID,
+    CompletionInterrupt, COMPLETION_COMMENT_TYPE
 )
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
@@ -27,6 +26,7 @@ from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.code_utils import CodeUtil
 from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.generation_utils.beam_tracking import BeamTracker
+from llm_lsp.constants import INTERRUPT_TOKEN
 import torch.nn.functional as F
 import os
 import torch
@@ -89,15 +89,12 @@ class Generator:
             yield
 
     def add_special_tokens(self):
-        interrupt_token_ids = [interrupt.token for interrupt in self.interrupts]
-        additional_special_tokens = interrupt_token_ids + [PAD_TOKEN]
+        additional_special_tokens = [INTERRUPT_TOKEN, PAD_TOKEN]
         self.tokenizer.add_special_tokens(
             {"additional_special_tokens": additional_special_tokens}
         )
         self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))
-        for interrupt in self.interrupts:
-            interrupt.init_input_id(self.tokenizer)
 
     def remove_padding(self, tokens):
         token_id = self.tokenizer.pad_token_id
@@ -109,13 +106,13 @@ class Generator:
         index = (tokens != token_id).nonzero()[:, -1].min().item()
         return tokens[:, index:]
 
-    def decode_tokens_remove_interrupt(self, interrupt_token_ids, output_ids):
-        if output_ids[-1] in interrupt_token_ids:
+    def decode_tokens_remove_interrupt(self, interrupt_token_id, output_ids):
+        if output_ids[-1] == interrupt_token_id:
             tokens = output_ids[:-1]
             return self.tokenizer.decode(tokens, skip_special_tokens=False)
         # Remove eos token
         output_ids = output_ids[:-1]
-        if output_ids[-1] in interrupt_token_ids:
+        if output_ids[-1] == interrupt_token_id:
             return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=False)
         return self.tokenizer.decode(output_ids, skip_special_tokens=False)
 
@@ -130,8 +127,6 @@ class Generator:
         input_ids = F.pad(input_ids, (pad_to_len - inputs_len, 0), value=pad_token_id)
         return input_ids, edited_input_id
 
-    def interrupt_input_ids(self):
-        return [interrupt.input_id for interrupt in self.interrupts]
 
     def expand_input_ids(self, input_ids, config):
         if (
@@ -216,8 +211,11 @@ class Generator:
             code_utils[i] = new_codeutils[i]
         a = None
 
+    def interrupt_token_id(self):
+        return self.tokenizer.convert_tokens_to_ids(INTERRUPT_TOKEN)
+
     def index_of_beam_to_edit(self, input_ids):
-        eos_tokens = self.interrupt_input_ids()
+        eos_tokens = [self.interrupt_token_id()]
         if isinstance(self.tokenizer.eos_token_id, int):
             eos_tokens.append(self.tokenizer.eos_token_id)
         else:
@@ -243,7 +241,7 @@ class Generator:
         """
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
         """
-        stopping_criterium = InterruptStoppingCriteria(self.interrupt_input_ids())
+        stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
         logits_processor = [
             logits_guider,
             boundary_logits_processor,
@@ -287,13 +285,13 @@ class Generator:
         last_token_ids = generated_sequences[0]
         last_token_ids = self.remove_padding(last_token_ids)
         decoded_text = self.decode_tokens_remove_interrupt(
-            self.interrupt_input_ids(), last_token_ids
+            self.interrupt_token_id(), last_token_ids
         )
         return decoded_text
 
-    def find_interrupt_type(self, interrupt):
+    def find_interrupt_type(self, interrupt: Interrupt):
         return [
-            i for i in self.interrupts if i.input_id == interrupt.interrupt_token_id
+            i for i in self.interrupts if i.type_name() == interrupt.interrupt_type_name
         ][0]
 
     def determine_next_symbol_from_completions(
@@ -328,9 +326,9 @@ class Generator:
     ):
         generated_code = prompt_util.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
-        if interrupt_type.token == COMPLETION_TOKEN_ID:
+        if interrupt_type.type_name() == COMPLETION_COMMENT_TYPE:
             dep_interrupt_type = [
-                i for i in self.interrupts if i.input_id == self.tokenizer.convert_tokens_to_ids(DEPRECATION_TOKEN_ID)
+                i for i in self.interrupts if i.type_name() == DEPRECATION_COMMENT_TYPE
             ][0]
             comment = dep_interrupt_type.create_comment(
                 interrupt.interrupt_context["dep"], code_util
@@ -371,6 +369,7 @@ class Generator:
             lsps,
             prompt_utils,
             filenames,
+            self.interrupt_token_id(),
             expand_size,
             self.beam_tracker,
             self.disabled,

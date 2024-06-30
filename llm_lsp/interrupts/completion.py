@@ -12,7 +12,6 @@ from llm_lsp.code_utils import CodeUtil
 
 
 
-TOKEN_ID = "[COMPLETION_INTERRUPT]"
 COMPLETION_COMMENT_TYPE = "completion"
 
 
@@ -62,7 +61,7 @@ def get_completion_message(completion_item, code_util) -> str:
 
 class CompletionInterrupt(InterruptType):
     def __init__(self):
-        super().__init__(TOKEN_ID)
+        super().__init__()
 
 
     def type_name(self) -> str:

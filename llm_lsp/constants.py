@@ -8,7 +8,7 @@ MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 4,
+    "num_beams": 2,
     # "diversity_penalty": 1.0,
     "do_sample": False,
     "top_k": 50,
@@ -25,3 +25,4 @@ GLOBAL_CONFIGURATION = {
 }
 
 MAXIMUM_DOCUMENTATION_LENGTH = 500
+INTERRUPT_TOKEN = "[INTERRUPT]"

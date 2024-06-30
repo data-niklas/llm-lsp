@@ -16,15 +16,12 @@ import re
 # TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.interrupts.deprecation import (
     is_deprecated,
-    TOKEN_ID as DEPRECATION_TOKEN_ID,
     DEPRECATION_COMMENT_TYPE,
 )
 from llm_lsp.interrupts.signature import (
-    TOKEN_ID as SIGNATURE_TOKEN_ID,
     SIGNATURE_COMMENT_TYPE,
 )
 from llm_lsp.interrupts.completion import (
-    TOKEN_ID as COMPLETION_TOKEN_ID,
     COMPLETION_COMMENT_TYPE,
 )
 from llm_lsp.interrupts import Interrupt
@@ -39,7 +36,7 @@ RANK_DELTA = 7.0
 
 @dataclass
 class InterruptGeneration(BaseException):
-    interrupt_token_id: int
+    interrupt_type_name: str
     context: Any
 
 
@@ -85,6 +82,7 @@ class LspLogitsProcessor(LogitsProcessor):
         lsp_clients,
         prompt_utils,
         filenames,
+        interrupt_token_id,
         expand_size,
         beam_tracker,
         disabled,
@@ -95,6 +93,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.filenames = filenames
         self.signature_cache = {}
         self.expand_size = expand_size
+        self.interrupt_token_id = interrupt_token_id
         self.interrupt = None
         self.beam_tracker = beam_tracker
         self.disabled = disabled
@@ -350,9 +349,8 @@ class LspLogitsProcessor(LogitsProcessor):
                 return False
         return True
 
-    def trigger_interrupt(self, context, j):
-        input_id = self.tokenizer.convert_tokens_to_ids(j)
-        raise InterruptGeneration(interrupt_token_id=input_id, context=context)
+    def trigger_interrupt(self, context, interrupt_type_name):
+        raise InterruptGeneration(interrupt_type_name=interrupt_type_name, context=context)
 
     def get_completion_text(self, completion):
         text = self.completion_text(completion)
@@ -452,16 +450,16 @@ class LspLogitsProcessor(LogitsProcessor):
                             "comp": non_deprecated_completions,
                             "dep": deprecated_completions,
                         },
-                        COMPLETION_TOKEN_ID,
+                        COMPLETION_COMMENT_TYPE,
                     )
             if not self.check_deprecation_documentation_included(
                 i, trigger_phrase, current_code, deprecated_completions
             ):
-                self.trigger_interrupt(deprecated_completions, DEPRECATION_TOKEN_ID)
+                self.trigger_interrupt(deprecated_completions, DEPRECATION_COMMENT_TYPE)
             if not self.check_signature_documentation_included(
                 i, trigger_phrase, current_code, signature_help
             ):
-                self.trigger_interrupt(signature_help, SIGNATURE_TOKEN_ID)
+                self.trigger_interrupt(signature_help, SIGNATURE_COMMENT_TYPE)
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
             # for each completion text, compare to trigger_phrase and get the next few characters
             # add the characters to the current_code to get the next tokens
@@ -509,11 +507,11 @@ class LspLogitsProcessor(LogitsProcessor):
             try:
                 scores[i] = self.scores_for_batch(i, input_ids[i], scores[i])
             except InterruptGeneration as ig:
-                scores[i][ig.interrupt_token_id] = INTERRUPT_LOGITS_SCORE
+                scores[i][self.interrupt_token_id] = INTERRUPT_LOGITS_SCORE
                 self.interrupt = Interrupt(
                     input_ids=input_ids,
                     interrupt_context=ig.context,
-                    interrupt_token_id=ig.interrupt_token_id,
+                    interrupt_type_name=ig.interrupt_type_name,
                 )
                 return scores
         return scores

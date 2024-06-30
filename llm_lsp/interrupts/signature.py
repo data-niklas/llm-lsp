@@ -5,7 +5,6 @@ from typing import Any, Optional
 from llm_lsp.code_utils import CodeUtil
 import re
 
-TOKEN_ID = "[SIGNATURE_INTERRUPT]"
 SIGNATURE_COMMENT_TYPE = "signature"
 
 def has_urls(string):
@@ -19,7 +18,7 @@ def has_urls(string):
 
 class SignatureInterrupt(InterruptType):
     def __init__(self, maximum_documentation_length=500):
-        super().__init__(TOKEN_ID)
+        super().__init__()
         self.maximum_documentation_length = maximum_documentation_length
 
     def type_name(self) -> str:
