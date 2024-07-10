@@ -9,6 +9,7 @@ from pygls.lsp.client import BaseLanguageClient
 from torch import FloatTensor, LongTensor
 from transformers import LogitsProcessor
 
+from llm_lsp.config import LspGenerationConfig
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
 # TODO: add special token
@@ -63,8 +64,6 @@ def eq_signature_help(a, b):
 
 
 class LspLogitsProcessor(LogitsProcessor):
-    # TODO: Filter class completions, if they have no prefix in the code yet, they should not randomly influence results if the model on its down does not decide to maybe use it
-    # This should stop Parser(fields=Parser)
     def __init__(
         self,
         tokenizer,
@@ -74,7 +73,7 @@ class LspLogitsProcessor(LogitsProcessor):
         interrupt_token_id,
         expand_size,
         beam_tracker,
-        disabled,
+        config: LspGenerationConfig,
     ):
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_clients: BaseLanguageClient = lsp_clients
@@ -85,7 +84,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.interrupt_token_id = interrupt_token_id
         self.interrupt = None
         self.beam_tracker = beam_tracker
-        self.disabled = disabled
+        self.disabled = not config.lsp_processor
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         # remove padding

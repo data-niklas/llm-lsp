@@ -4,14 +4,11 @@ from transformers import LogitsProcessor
 
 
 class MapLogitsProcessor(LogitsProcessor):
-    def __init__(self, input_id_map, disabled=False):
+    def __init__(self, input_id_map):
         self.input_id_map = input_id_map
-        self.disabled = disabled
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
         """Returns a 2d FloatTensor which has scores for every batch"""
-        if self.disabled:
-            return scores
         for i in range(input_ids.shape[0]):
             score = scores[i]
             for k, v in self.input_id_map.items():
@@ -24,7 +21,7 @@ class MapLogitsProcessor(LogitsProcessor):
 
 
 class BoundaryLogitsProcessor(MapLogitsProcessor):
-    def __init__(self, tokenizer, token_boundaries, disabled=False):
+    def __init__(self, tokenizer, token_boundaries):
         vocab = tokenizer.get_vocab()
         trie = Trie(vocab.keys())
         input_id_map = {}
@@ -49,4 +46,4 @@ class BoundaryLogitsProcessor(MapLogitsProcessor):
             }
             boundary_input_id_map = {vocab[k]: vocab[v] for (k, v) in token_map.items()}
             input_id_map.update(boundary_input_id_map)
-        super().__init__(input_id_map, disabled)
+        super().__init__(input_id_map)

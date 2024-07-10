@@ -1,32 +1,25 @@
-import copy
 import time
-import warnings
-from contextlib import contextmanager
 from copy import deepcopy
 # from llm_lsp.lsp_client import LspClient
 from typing import Any, Dict, List
 
-import torch
-import torch.nn.functional as F
 from transformers import AutoTokenizer, GenerationMixin
-from transformers.generation import GenerationConfig, GenerationMode
 
-from llm_lsp.code_utils import CodeUtil
 from llm_lsp.code_utils.python import PythonCodeUtil
+from llm_lsp.config import LspGenerationConfig
 from llm_lsp.constants import INTERRUPT_TOKEN
 from llm_lsp.generation_utils.beam_tracking import BeamTracker
-from llm_lsp.interrupt_mixin import resume
-from llm_lsp.interrupts import (Interrupt, InterruptStoppingCriteria,
-                                InterruptType)
-from llm_lsp.interrupts.completion import (COMPLETION_COMMENT_TYPE,
-                                           CompletionInterrupt)
-from llm_lsp.interrupts.deprecation import (DEPRECATION_COMMENT_TYPE,
-                                            DeprecationInterrupt)
+from llm_lsp.interrupts import InterruptStoppingCriteria, InterruptType
+from llm_lsp.interrupts.completion import CompletionInterrupt
+from llm_lsp.interrupts.deprecation import DeprecationInterrupt
 from llm_lsp.interrupts.signature import SignatureInterrupt
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
 from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.lsp.lsp_processor import LspLogitsProcessor
+from llm_lsp.mixins.interrupt_mixin import InterruptMixin
+from llm_lsp.mixins.pipeline_mixin import PipelineMixin
+from llm_lsp.mixins.token_sequence_edit_mixin import TokenSequenceEditMixin
 from llm_lsp.prompt_formatters import PromptFormatter
 from llm_lsp.prompt_formatters.default import DefaultPromptFormatter
 from llm_lsp.prompt_formatters.vanilla import VanillaPromptFormatter
@@ -41,7 +34,7 @@ DEFAULT_INTERRUPTS = [
 PAD_TOKEN = "[PAD]"
 
 
-class Generator:
+class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
     def __init__(
         self,
         model: GenerationMixin,
@@ -49,7 +42,7 @@ class Generator:
         generation_config: Dict[str, Any],
         prompt_formatter: PromptFormatter = None,
         interrupts: List[InterruptType] = DEFAULT_INTERRUPTS,
-        disabled=False,
+        config: LspGenerationConfig = LspGenerationConfig(),
     ):
         self.device = model.device
         self.model = model
@@ -57,33 +50,13 @@ class Generator:
         self.generation_config = generation_config
         if prompt_formatter is None:
             prompt_formatter = (
-                VanillaPromptFormatter() if disabled else DefaultPromptFormatter()
+                VanillaPromptFormatter() if config.is_disabled() else DefaultPromptFormatter()
             )
         self.prompt_formatter = prompt_formatter
         self.interrupts = interrupts
-        self.disabled = disabled
+        self.config = config
         self.beam_tracker = BeamTracker()
         self.add_special_tokens()
-
-    @contextmanager
-    def device_placement(self):
-        """
-        Context Manager allowing tensor allocation on the user-specified device in framework agnostic way.
-
-        Returns:
-            Context manager
-
-        Examples:
-
-        ```python
-        # Explicitly ask for tensor allocation on CUDA device :0
-        pipe = pipeline(..., device=0)
-        with pipe.device_placement():
-            # Every framework specific tensor allocation will be done on the request device
-            output = pipe(...)
-        ```"""
-        with torch.device(self.device):
-            yield
 
     def add_special_tokens(self):
         additional_special_tokens = [INTERRUPT_TOKEN]  # , PAD_TOKEN]
@@ -95,16 +68,6 @@ class Generator:
         # self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))
 
-    def remove_padding(self, tokens):
-        token_id = self.tokenizer.pad_token_id
-        index = (tokens != token_id).nonzero()[0].item()
-        return tokens[index:]
-
-    def remove_nd_padding(self, tokens):
-        token_id = self.tokenizer.pad_token_id
-        index = (tokens != token_id).nonzero()[:, -1].min().item()
-        return tokens[:, index:]
-
     def decode_tokens_remove_interrupt(self, interrupt_token_id, output_ids):
         if output_ids[-1] == interrupt_token_id:
             tokens = output_ids[:-1]
@@ -114,75 +77,6 @@ class Generator:
         if output_ids[-1] == interrupt_token_id:
             return self.tokenizer.decode(output_ids[:-1], skip_special_tokens=False)
         return self.tokenizer.decode(output_ids, skip_special_tokens=False)
-
-    def pad_input_ids(self, input_ids, edited_input_id):
-        pad_token_id = self.tokenizer.pad_token_id
-        edited_len = edited_input_id.shape[1]
-        inputs_len = input_ids.shape[1]
-        pad_to_len = max(edited_len, inputs_len)
-        edited_input_id = F.pad(
-            edited_input_id, (pad_to_len - edited_len, 0), value=pad_token_id
-        )
-        input_ids = F.pad(input_ids, (pad_to_len - inputs_len, 0), value=pad_token_id)
-        return input_ids, edited_input_id
-
-    def expand_input_ids(self, input_ids, config):
-        if (
-            self.model.generation_config._from_model_config
-            and self.model.generation_config._original_object_hash
-            == hash(self.model.generation_config)
-            and self.model.config._has_non_default_generation_parameters()
-        ):
-            new_generation_config = GenerationConfig.from_model_config(
-                self.model.config
-            )
-            if new_generation_config != self.model.generation_config:
-                warnings.warn(
-                    "You have modified the pretrained model configuration to control generation. This is a"
-                    " deprecated strategy to control generation and will be removed soon, in a future version."
-                    " Please use and modify the model generation configuration (see"
-                    " https://huggingface.co/docs/transformers/generation_strategies#default-text-generation-configuration )"
-                )
-                self.model.generation_config = new_generation_config
-        generation_config = self.model.generation_config
-
-        generation_config = copy.deepcopy(generation_config)
-        model_kwargs = generation_config.update(
-            **config
-        )  # All unused kwargs must be model kwargs
-        generation_mode = generation_config.get_generation_mode(None)
-        if generation_mode in [
-            GenerationMode.ASSISTED_GENERATION,
-            GenerationMode.GREEDY_SEARCH,
-            GenerationMode.CONTRASTIVE_SEARCH,
-        ]:
-            return input_ids, model_kwargs
-        elif generation_mode == GenerationMode.SAMPLE:
-            return self.model._expand_inputs_for_generation(
-                input_ids=input_ids,
-                expand_size=generation_config.num_return_sequences,
-                is_encoder_decoder=self.model.config.is_encoder_decoder,
-                **model_kwargs,
-            )
-        elif generation_mode == GenerationMode.SAMPLE:
-            return self.model._expand_inputs_for_generation(
-                input_ids=input_ids,
-                expand_size=generation_config.num_return_sequences,
-                is_encoder_decoder=self.model.config.is_encoder_decoder,
-                **model_kwargs,
-            )
-        elif generation_mode in [
-            GenerationMode.BEAM_SAMPLE,
-            GenerationMode.BEAM_SEARCH,
-            GenerationMode.GROUP_BEAM_SEARCH,
-            GenerationMode.CONSTRAINED_BEAM_SEARCH,
-        ]:
-            return self.model._expand_inputs_for_generation(
-                input_ids=input_ids,
-                expand_size=generation_config.num_beams,
-                is_encoder_decoder=self.model.config.is_encoder_decoder,
-                **model_kwargs,
-            )
 
     def track_beam_selections(self, prompt_states, code_utils):
         """Beam indices for each batch. Access the selected beams using batch_index * batch_size + beam_index_in_batch
@@ -238,12 +132,11 @@ class Generator:
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
-        logits_processor = [
-            lsp_processor,
-            boundary_logits_processor,
-            comments_logits_processor,
-        ]
-        # logits_processor = [lsp_processor, comments_logits_processor]
+        logits_processors = [lsp_processor]
+        if self.config.boundary_processor:
+            logits_processors.append(boundary_logits_processor)
+        if self.config.comments_processor:
+            logits_processors.append(comments_logits_processor)
         kwargs = {}
         if "pad_token_id" not in config:
             kwargs["pad_token_id"] = (
@@ -254,11 +147,10 @@ class Generator:
             # Needed because logits processor is called before the process method in which the beam arrangements are tracked
             self.beam_tracker.reset()
 
-        generated_result = resume(
-            self.model,
+        generated_result = self.resume(
             input_ids,
             batch_size,
-            logits_processor=logits_processor,
+            logits_processor=logits_processors,
             stopping_criteria=[stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
@@ -285,80 +177,6 @@ class Generator:
         )
         return decoded_text
 
-    def find_interrupt_type(self, interrupt: Interrupt):
-        return [
-            i for i in self.interrupts if i.type_name() == interrupt.interrupt_type_name
-        ][0]
-
-    def determine_next_symbol_from_completions(
-        self,
-        completions,
-        deprecation_text,
-        prompt_formatter: PromptFormatter,
-        code_util: CodeUtil,
-        code,
-    ):
-        wrapped_code = code_util.wrap_in_code_block(code)
-        messages = prompt_formatter.create_completion_chooser_message(
-            wrapped_code, False, completions, deprecation_text
-        )
-        prompt = self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        prompt += "`"
-        input_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
-        generation_result = self.model.generate(
-            input_ids, use_cache=True, **self.generation_config
-        )
-        generation_text = self.tokenizer.decode(
-            generation_result[0][len(input_ids[0]) :], skip_special_tokens=True
-        )
-        if generation_text.endswith("`"):
-            return generation_text.split("`")[0]
-        return ""
-
-    def edit_generation_text_for_completion(
-        self, decoded_text, prompt_state, interrupt, code_util
-    ):
-        generated_code = prompt_state.get_whole_code(decoded_text)
-        interrupt_type = self.find_interrupt_type(interrupt)
-        if interrupt_type.type_name() == COMPLETION_COMMENT_TYPE:
-            dep_interrupt_type = [
-                i for i in self.interrupts if i.type_name() == DEPRECATION_COMMENT_TYPE
-            ][0]
-            comment = dep_interrupt_type.create_comment(
-                interrupt.interrupt_context["dep"], code_util
-            )
-            generated_code += self.determine_next_symbol_from_completions(
-                interrupt.interrupt_context["comp"],
-                comment,
-                prompt_state.prompt_formatter,
-                code_util,
-                generated_code,
-            )
-        else:
-            comment = interrupt_type.create_comment(
-                interrupt.interrupt_context, code_util
-            )
-            prompt_state.add_comment(comment, interrupt_type.type_name())
-        edited_prompt = prompt_state.format(generated_code)
-        return edited_prompt
-
-    def edit_input_ids(self, interrupt, edited_prompt, interrupt_beam_index):
-        edited_input_ids = self.tokenizer(
-            edited_prompt, return_tensors="pt", add_special_tokens=False
-        ).input_ids
-        input_ids = interrupt.input_ids
-        if input_ids.shape[0] > 1:
-            input_ids, edited_input_ids = self.pad_input_ids(
-                input_ids, edited_input_ids
-            )
-            input_ids[interrupt_beam_index] = edited_input_ids
-        else:
-            input_ids = edited_input_ids
-        input_ids = self.remove_nd_padding(input_ids)
-        return input_ids
-
     def create_lsp_logits_processor(self, lsps, prompt_states, filenames, expand_size):
         return LspLogitsProcessor(
             self.tokenizer,
@@ -368,14 +186,14 @@ class Generator:
             self.interrupt_token_id(),
             expand_size,
             self.beam_tracker,
-            self.disabled,
+            self.config,
         )
 
     def create_boundary_logits_processor(self):
-        return BoundaryLogitsProcessor(self.tokenizer, [".", "("], self.disabled)
+        return BoundaryLogitsProcessor(self.tokenizer, [".", "("])
 
     def create_comments_logits_processor(self):
-        return CommentsLogitsProcessor(self.tokenizer, self.disabled)
+        return CommentsLogitsProcessor(self.tokenizer)
 
     async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
         with self.device_placement():
