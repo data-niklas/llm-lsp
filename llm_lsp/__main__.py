@@ -76,7 +76,7 @@ async def main(args):
         # attn_implementation="flash_attention_2"
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    #tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
     generator = Generator(model, tokenizer, generation_config, config=config)
     with open(args.file, "r") as f:

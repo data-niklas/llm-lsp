@@ -60,11 +60,14 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         self.add_special_tokens()
 
     def add_special_tokens(self):
-        additional_special_tokens = [INTERRUPT_TOKEN, PAD_TOKEN]
+        additional_special_tokens = [INTERRUPT_TOKEN]
+        if self.tokenizer.pad_token_id is None:
+            additional_special_tokens.append(PAD_TOKEN)
         self.tokenizer.add_special_tokens(
             {"additional_special_tokens": additional_special_tokens}
         )
-        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))
 
     def decode_tokens_remove_interrupt(self, interrupt_token_id, output_ids):
