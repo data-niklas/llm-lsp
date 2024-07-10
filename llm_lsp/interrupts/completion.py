@@ -1,20 +1,14 @@
+import json
+import sys
+from typing import Any, Optional
+
+from lsprotocol.types import CompletionItemKind
+
+from llm_lsp.code_utils import CodeUtil
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt_state import Comment
-from llm_lsp.code_utils import CodeUtil
-from typing import Any, Optional
-import importlib
-import sys
-import json
-from typing import List
-from functools import lru_cache
-from lsprotocol.types import CompletionItemKind
-from llm_lsp.code_utils import CodeUtil
-
-
 
 COMPLETION_COMMENT_TYPE = "completion"
-
-
 
 
 KINDS = {
@@ -63,7 +57,6 @@ class CompletionInterrupt(InterruptType):
     def __init__(self):
         super().__init__()
 
-
     def type_name(self) -> str:
         return COMPLETION_COMMENT_TYPE
 
@@ -72,14 +65,15 @@ class CompletionInterrupt(InterruptType):
             return None
         used_context = [item for item in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
-        notes = ["Hint: The following symbols are code completion entries. Use the appropriate symbol to complete the current code: " + ", ".join([item.insert_text for item in used_context])]
+        notes = [
+            "Hint: The following symbols are code completion entries. Use the appropriate symbol to complete the current code: "
+            + ", ".join([item.insert_text for item in used_context])
+        ]
         return Comment(
-            comment="\n".join(notes),
-            interrupt=COMPLETION_COMMENT_TYPE,
-            context=context
+            comment="\n".join(notes), interrupt=COMPLETION_COMMENT_TYPE, context=context
         )
 
 
 if __name__ == "__main__":
     items = json.loads(sys.stdin.read())
-    print(json.dumps([get_deprecation_message(item) for item in items]))
+    print(json.dumps([get_completion_message(item) for item in items]))

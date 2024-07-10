@@ -1,11 +1,14 @@
-from transformers import LogitsProcessor, PreTrainedTokenizer
-from torch import LongTensor, FloatTensor
+from torch import FloatTensor, LongTensor
+from transformers import LogitsProcessor
+
 
 class CommentsLogitsProcessor(LogitsProcessor):
     def __init__(self, tokenizer, disabled=False):
         vocab = tokenizer.get_vocab()
         comment_tokens = [token for token in vocab.keys() if "#" in token]
-        self.comment_token_ids = [vocab[comment_token] for comment_token in comment_tokens]
+        self.comment_token_ids = [
+            vocab[comment_token] for comment_token in comment_tokens
+        ]
         self.disabled = disabled
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
@@ -17,5 +20,5 @@ class CommentsLogitsProcessor(LogitsProcessor):
             for comment_token_id in self.comment_token_ids:
                 # Was -inf but caused errors?
                 score[comment_token_id] = -100.0
-            scores[i] = score            
+            scores[i] = score
         return scores

@@ -1,10 +1,13 @@
-from dataclasses import dataclass
-from typing import Callable, Any, Optional
 from abc import ABC, abstractmethod
-from llm_lsp.prompt_state import Comment
-from transformers import StoppingCriteria
+from dataclasses import dataclass
+from typing import Any, Optional
+
 from torch import Tensor
+from transformers import StoppingCriteria
+
 from llm_lsp.code_utils import CodeUtil
+from llm_lsp.prompt_state import Comment
+
 
 class InterruptStoppingCriteria(StoppingCriteria):
     def __init__(self, interrupt_token_id):
@@ -17,12 +20,14 @@ class InterruptStoppingCriteria(StoppingCriteria):
                 return True
         return False
 
+
 @dataclass
 class Interrupt:
     # Tensor of (return_count * beams * batched_items_count) x currently_generated_tokens
     input_ids: Tensor
     interrupt_context: Any
     interrupt_type_name: str
+
 
 class InterruptType(ABC):
     def __init__(self):
@@ -37,8 +42,6 @@ class InterruptType(ABC):
         pass
 
 
-
-
 def decode_tokens_with_maybe_interrupt(tokenizer, interrupt_token_id, tokens):
     if tokens[-1] == interrupt_token_id:
         return tokens[-1], tokenizer.decode(tokens[:-1])
@@ -47,4 +50,3 @@ def decode_tokens_with_maybe_interrupt(tokenizer, interrupt_token_id, tokens):
     if tokens[-1] == interrupt_token_id:
         return tokens[-1], tokenizer.decode(tokens[:-1])
     return None, tokenizer.decode(tokens)
-

@@ -1,39 +1,36 @@
-from transformers import AutoTokenizer, AutoModel, PreTrainedModel, GenerationMixin
-from transformers.generation import GenerationMode, GenerationConfig
+import copy
+import time
 import warnings
-from tree_sitter import Language, Parser
-import tree_sitter_python
-
-PY_LANGUAGE = Language(tree_sitter_python.language(), "python")
+from contextlib import contextmanager
+from copy import deepcopy
 # from llm_lsp.lsp_client import LspClient
-from typing import Dict, Any, Optional, List
-from llm_lsp.prompt_state import PromptState
+from typing import Any, Dict, List
+
+import torch
+import torch.nn.functional as F
+from transformers import AutoTokenizer, GenerationMixin
+from transformers.generation import GenerationConfig, GenerationMode
+
+from llm_lsp.code_utils import CodeUtil
+from llm_lsp.code_utils.python import PythonCodeUtil
+from llm_lsp.constants import INTERRUPT_TOKEN
+from llm_lsp.generation_utils.beam_tracking import BeamTracker
+from llm_lsp.interrupt_mixin import resume
+from llm_lsp.interrupts import (Interrupt, InterruptStoppingCriteria,
+                                InterruptType)
+from llm_lsp.interrupts.completion import (COMPLETION_COMMENT_TYPE,
+                                           CompletionInterrupt)
+from llm_lsp.interrupts.deprecation import (DEPRECATION_COMMENT_TYPE,
+                                            DeprecationInterrupt)
+from llm_lsp.interrupts.signature import SignatureInterrupt
+from llm_lsp.lsp import create_lsp_for_language
+from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
+from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
+from llm_lsp.lsp.lsp_processor import LspLogitsProcessor
 from llm_lsp.prompt_formatters import PromptFormatter
 from llm_lsp.prompt_formatters.default import DefaultPromptFormatter
 from llm_lsp.prompt_formatters.vanilla import VanillaPromptFormatter
-from pygls.lsp.client import BaseLanguageClient
-from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
-from llm_lsp.interrupts.deprecation import DeprecationInterrupt, DEPRECATION_COMMENT_TYPE
-from llm_lsp.interrupts.signature import SignatureInterrupt, SIGNATURE_COMMENT_TYPE
-from llm_lsp.interrupts.completion import (
-    CompletionInterrupt, COMPLETION_COMMENT_TYPE
-)
-from llm_lsp.lsp import create_lsp_for_language
-from llm_lsp.interrupt_mixin import resume
-from llm_lsp.lsp.lsp_processor import LspLogitsProcessor
-from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
-from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
-from llm_lsp.code_utils import CodeUtil
-from llm_lsp.code_utils.python import PythonCodeUtil
-from llm_lsp.generation_utils.beam_tracking import BeamTracker
-from llm_lsp.constants import INTERRUPT_TOKEN
-import torch.nn.functional as F
-import os
-import torch
-from contextlib import contextmanager
-from copy import deepcopy
-import copy
-import time
+from llm_lsp.prompt_state import PromptState
 
 DEFAULT_INTERRUPTS = [
     DeprecationInterrupt(),
@@ -89,11 +86,13 @@ class Generator:
             yield
 
     def add_special_tokens(self):
-        additional_special_tokens = [INTERRUPT_TOKEN, PAD_TOKEN]
+        additional_special_tokens = [INTERRUPT_TOKEN]  # , PAD_TOKEN]
         self.tokenizer.add_special_tokens(
             {"additional_special_tokens": additional_special_tokens}
         )
-        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
+        # print(self.tokenizer.pad_token_id)
+        # (self.tokenizer.convert_ids_to_tokens(self.tokenizer.pad_token_id))
+        # self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))
 
     def remove_padding(self, tokens):
@@ -126,7 +125,6 @@ class Generator:
         )
         input_ids = F.pad(input_ids, (pad_to_len - inputs_len, 0), value=pad_token_id)
         return input_ids, edited_input_id
-
 
     def expand_input_ids(self, input_ids, config):
         if (
@@ -196,7 +194,6 @@ class Generator:
         new_prompt_states = []
         new_codeutils = []
         indices = self.beam_tracker.get_final_beam_indices()
-        a = None
         for i in range(len(indices)):
             index = indices[i]
             prompt_state = prompt_states[index]
@@ -209,7 +206,6 @@ class Generator:
         for i in range(len(prompt_states)):
             prompt_states[i] = new_prompt_states[i]
             code_utils[i] = new_codeutils[i]
-        a = None
 
     def interrupt_token_id(self):
         return self.tokenizer.convert_tokens_to_ids(INTERRUPT_TOKEN)
@@ -409,8 +405,6 @@ class Generator:
         ]
         prompt = prompt_states[0].format(code)
 
-        parser = Parser()
-        parser.set_language(PY_LANGUAGE)
         # NOTE: They need to be stored per beam, as each beam may have different comments, AND THEY NEED TO BE SHUFFLED ACCORDING TO THE SELECTED BEAMS IN THE BEAMSEARCHSCORER
         code_utils = [PythonCodeUtil() for i in range(batch_size * beam_size)]
 

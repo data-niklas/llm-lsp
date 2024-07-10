@@ -1,5 +1,6 @@
+from typing import Any, Dict, List
+
 from llm_lsp.prompt_formatters import PromptFormatter
-from typing import List, Dict, Any
 
 
 class DefaultPromptFormatter(PromptFormatter):
@@ -16,9 +17,23 @@ class DefaultPromptFormatter(PromptFormatter):
             ]
         return [{"role": "user", "content": user_prompt}]
 
-
-    def create_completion_chooser_message(self, wrapped_current_code: str, system_prompt_enabled: bool, completions, deprecation) -> List[Dict[str, Any]]:
-        completion_text = ", ".join(["`" + item.insert_text + "`" for item in completions])
+    def create_completion_chooser_message(
+        self,
+        wrapped_current_code: str,
+        system_prompt_enabled: bool,
+        completions,
+        deprecation,
+    ) -> List[Dict[str, Any]]:
+        completion_text = ", ".join(
+            ["`" + item.insert_text + "`" for item in completions]
+        )
         deprecation_text = "" if deprecation is None else deprecation.comment
-        user_prompt = "The following symbols are code completion entries. Determine the appropriate symbol to complete the code in the code block: " + completion_text + "\n\n" + wrapped_current_code + "\n\nReturn only the single chosen symbol. Do not provide commentary. Output format:\n`CHOSEN SYMBOL`\n\n" + deprecation_text
+        user_prompt = (
+            "The following symbols are code completion entries. Determine the appropriate symbol to complete the code in the code block: "
+            + completion_text
+            + "\n\n"
+            + wrapped_current_code
+            + "\n\nReturn only the single chosen symbol. Do not provide commentary. Output format:\n`CHOSEN SYMBOL`\n\n"
+            + deprecation_text
+        )
         return [{"role": "user", "content": user_prompt}]

@@ -1,7 +1,10 @@
-from llm_lsp.code_utils import CodeUtil
 import re
 from typing import Optional
+
 from docstring_parser import parse
+
+from llm_lsp.code_utils import CodeUtil
+
 
 class PythonCodeUtil(CodeUtil):
     @property
@@ -14,8 +17,8 @@ class PythonCodeUtil(CodeUtil):
 
     def extract_comment(self, code_line: str) -> Optional[str]:
         code_line = code_line.strip()
-        if line.startswith("#"):
-            return line[1:].strip()
+        if code_line.startswith("#"):
+            return code_line[1:].strip()
         return None
 
     def make_single_line_comment(self, text: str) -> str:

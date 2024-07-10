@@ -1,8 +1,11 @@
-from jinja2 import TemplateError
-from typing import List, Dict, Any
-from transformers import AutoTokenizer
-from llm_lsp.prompt_formatters import PromptFormatter
 from dataclasses import dataclass
+from typing import Any
+
+from jinja2 import TemplateError
+from transformers import AutoTokenizer
+
+from llm_lsp.prompt_formatters import PromptFormatter
+
 
 @dataclass
 class Comment:
@@ -10,8 +13,14 @@ class Comment:
     interrupt: str
     context: Any
 
+
 class PromptState:
-    def __init__(self, tokenizer: AutoTokenizer, prompt_formatter: PromptFormatter, initial_text: str):
+    def __init__(
+        self,
+        tokenizer: AutoTokenizer,
+        prompt_formatter: PromptFormatter,
+        initial_text: str,
+    ):
         self.tokenizer = tokenizer
         self.initial_text = initial_text
         self.prompt_formatter = prompt_formatter
@@ -22,21 +31,28 @@ class PromptState:
         """Create a complete prompt with special tokens and ready to use for generation"""
         i = "\n".join([c.comment + "." for c in self.instructions])
         try:
-            messages = self.prompt_formatter.create_completion_messages(self.initial_text, True, i)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            messages = self.prompt_formatter.create_completion_messages(
+                self.initial_text, True, i
+            )
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
-            messages = self.prompt_formatter.create_completion_messages(self.initial_text, False, i)
-            prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            messages = self.prompt_formatter.create_completion_messages(
+                self.initial_text, False, i
+            )
+            prompt = self.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
         self.initial_prompt = prompt
         self.code_prefix = self.initial_text
-
 
     def add_comment(self, comment, name):
         self.instructions = [i for i in self.instructions if i.interrupt != name]
         if comment is not None:
             self.instructions.append(comment)
-        self._create_completion_prompt() 
+        self._create_completion_prompt()
 
     def get_comment_of_interrupt(self, name):
         results = [i for i in self.instructions if i.interrupt == name]
@@ -68,7 +84,7 @@ class PromptState:
             text = text.replace(naughty_token + " ", naughty_token)
         generated_text = text[len(self.initial_prompt) :]
         generated_code = self.extract_from_markdown_code_block(generated_text)
-        return generated_code[len(self.code_prefix):]
+        return generated_code[len(self.code_prefix) :]
 
     def get_whole_code(self, text):
         generated_code = self.get_generated_code(text)

@@ -1,7 +1,9 @@
-import torch
-from typing import Union, List, Optional, Dict
-from transformers.generation import BeamSearchScorer
 from copy import deepcopy
+from typing import Dict, List, Optional, Union
+
+import torch
+from transformers.generation import BeamSearchScorer
+
 
 class BeamIndexStoringSearchScores(BeamSearchScorer):
     def __init__(self, *args, **kwargs):
@@ -51,7 +53,9 @@ class BeamIndexStoringSearchScores(BeamSearchScorer):
         decoder_prompt_len: Optional[int] = 0,
     ):
         self.input_ids = input_ids  # NOTE: to be read later on to track beam indices
-        if self.beam_tracker is not None:  # NOTE: to be read later on to track beam indices
+        if (
+            self.beam_tracker is not None
+        ):  # NOTE: to be read later on to track beam indices
             self.beam_tracker.track_beam_indices(beam_indices)
         return super().finalize(
             input_ids,
@@ -64,6 +68,7 @@ class BeamIndexStoringSearchScores(BeamSearchScorer):
             beam_indices,
             decoder_prompt_len,
         )
+
 
 class BeamTracker:
     def __init__(self):

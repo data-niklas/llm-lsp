@@ -1,33 +1,22 @@
-from transformers import LogitsProcessor, PreTrainedTokenizer
-from torch import LongTensor, FloatTensor, full_like, full
-import torch
-from pygls.lsp.client import BaseLanguageClient
-from logzero import logger
-from lsprotocol.types import *
-import asyncio
-from os import path
-import os
-import uuid
-from functools import lru_cache
-import json
 import re
+from dataclasses import dataclass
+from functools import lru_cache
+from typing import Any, List
 
+import torch
+from lsprotocol.types import *  # noqa: F403
+from pygls.lsp.client import BaseLanguageClient
+from torch import FloatTensor, LongTensor
+from transformers import LogitsProcessor
+
+from llm_lsp.interrupts import Interrupt
+from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
 # TODO: add special token
 # TODO: use special token as interrupt to provide more information to pipeline
-from llm_lsp.interrupts.deprecation import (
-    is_deprecated,
-    DEPRECATION_COMMENT_TYPE,
-)
-from llm_lsp.interrupts.signature import (
-    SIGNATURE_COMMENT_TYPE,
-)
-from llm_lsp.interrupts.completion import (
-    COMPLETION_COMMENT_TYPE,
-)
-from llm_lsp.interrupts import Interrupt
+from llm_lsp.interrupts.deprecation import (DEPRECATION_COMMENT_TYPE,
+                                            is_deprecated)
+from llm_lsp.interrupts.signature import SIGNATURE_COMMENT_TYPE
 from llm_lsp.lsp.file import LspCodeFile
-from dataclasses import dataclass
-from typing import Any
 
 # Was inf but caused issues
 INTERRUPT_LOGITS_SCORE = 1000.0
@@ -319,8 +308,6 @@ class LspLogitsProcessor(LogitsProcessor):
             if len(completions) == 0:
                 return True
             return False
-        code_lines = current_code.splitlines()
-        last_code_line = code_lines[-1]
         return eq_completions_items(
             completions, comment.context
         ) or in_completion_items(completions, comment.context)
@@ -350,7 +337,9 @@ class LspLogitsProcessor(LogitsProcessor):
         return True
 
     def trigger_interrupt(self, context, interrupt_type_name):
-        raise InterruptGeneration(interrupt_type_name=interrupt_type_name, context=context)
+        raise InterruptGeneration(
+            interrupt_type_name=interrupt_type_name, context=context
+        )
 
     def get_completion_text(self, completion):
         text = self.completion_text(completion)

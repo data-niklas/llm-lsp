@@ -1,25 +1,21 @@
-from transformers import (
-    GenerationMixin,
-    GenerationConfig,
-    LogitsProcessorList,
-    StoppingCriteriaList,
-)
-from transformers.generation.utils import (
-    GenerateOutput,
-    BeamSearchScorer,
-    GenerationMode,
-    NEED_SETUP_CACHE_CLASSES_MAPPING,
-)
-import torch
-from typing import Optional, Union, List, Callable
-from transformers.utils import logging
-import warnings
-
-logger = logging.get_logger(__name__)
-from transformers.integrations import is_deepspeed_zero3_enabled
 import copy
 import inspect
-from llm_lsp.generation_utils.beam_tracking import BeamIndexStoringSearchScores, BeamTracker
+import warnings
+from typing import Callable, List, Optional, Union
+
+import torch
+import torch.distributed as dist
+from transformers import (GenerationConfig, LogitsProcessorList,
+                          StoppingCriteriaList)
+from transformers.generation.utils import (NEED_SETUP_CACHE_CLASSES_MAPPING,
+                                           GenerateOutput, GenerationMode)
+from transformers.integrations import is_deepspeed_zero3_enabled
+from transformers.utils import logging
+
+from llm_lsp.generation_utils.beam_tracking import (
+    BeamIndexStoringSearchScores, BeamTracker)
+
+logger = logging.get_logger(__name__)
 
 
 @torch.no_grad()
@@ -39,7 +35,6 @@ def resume(
     beam_tracker: Optional[BeamTracker] = None,
     **kwargs,
 ) -> Union[GenerateOutput, torch.LongTensor]:
-
     if synced_gpus is None:
         if is_deepspeed_zero3_enabled() and dist.get_world_size() > 1:
             synced_gpus = True
@@ -380,7 +375,7 @@ def resume(
             do_early_stopping=generation_config.early_stopping,
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             max_length=generation_config.max_length,
-            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {}),
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
         # input_ids, model_kwargs = model._expand_inputs_for_generation(
@@ -422,7 +417,7 @@ def resume(
             do_early_stopping=generation_config.early_stopping,
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             max_length=generation_config.max_length,
-            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {}),
         )
 
         # 13. interleave input_ids with `num_beams` additional sequences per batch
@@ -464,7 +459,7 @@ def resume(
             num_beam_hyps_to_keep=generation_config.num_return_sequences,
             num_beam_groups=generation_config.num_beam_groups,
             max_length=generation_config.max_length,
-            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {})
+            **({"beam_tracker": beam_tracker} if beam_tracker is not None else {}),
         )
         # 12. interleave input_ids with `num_beams` additional sequences per batch
         # input_ids, model_kwargs = model._expand_inputs_for_generation(

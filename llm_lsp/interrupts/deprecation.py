@@ -1,13 +1,11 @@
+import importlib
+import json
+import sys
+from functools import lru_cache
+from typing import Any, List, Optional
+
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt_state import Comment
-from llm_lsp.code_utils import CodeUtil
-from typing import Any, Optional
-import importlib
-import sys
-import json
-from typing import List
-from functools import lru_cache
-
 
 
 def module_name_and_variable_parts(item):
@@ -57,7 +55,6 @@ def is_deprecated(item):
 DEPRECATION_COMMENT_TYPE = "deprecation"
 
 
-
 class DeprecationInterrupt(InterruptType):
     def __init__(self):
         super().__init__()
@@ -70,10 +67,11 @@ class DeprecationInterrupt(InterruptType):
             return None
         used_context = [a for a in context]
         used_context.sort(key=lambda x: x.sort_text, reverse=True)
-        #context = context[-3:]
+        # context = context[-3:]
         notes = [
-            #"The following variable is deprecated, use an alternative: " +
-            "Hint: " + get_deprecation_message(
+            # "The following variable is deprecated, use an alternative: " +
+            "Hint: "
+            + get_deprecation_message(
                 completion_item.detail + "." + completion_item.insert_text
             ).strip()
             for completion_item in used_context
@@ -81,7 +79,7 @@ class DeprecationInterrupt(InterruptType):
         return Comment(
             comment="\n".join(notes),
             interrupt=DEPRECATION_COMMENT_TYPE,
-            context=context
+            context=context,
         )
 
 

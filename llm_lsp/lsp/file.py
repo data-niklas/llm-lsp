@@ -1,13 +1,16 @@
+import asyncio
+import logging
+import os
 import uuid
 from os import path
-import os
-import asyncio
+
 from lsprotocol.types import *
+from pygls.protocol.json_rpc import JsonRpcInternalError, JsonRPCProtocol
+from pygls.protocol.json_rpc import __name__ as json_rpc_name
 
-from pygls.protocol.json_rpc import JsonRPCProtocol, __name__ as json_rpc_name, JsonRpcInternalError
-
-import logging
 json_rpc_logger = logging.getLogger(json_rpc_name)
+
+
 def data_received(self, data: bytes):
     try:
         self._data_received(data)
@@ -16,17 +19,19 @@ def data_received(self, data: bytes):
         json_rpc_logger.exception("Error receiving data", exc_info=True)
         self._server._report_server_error(error, JsonRpcInternalError)
 
+
 JsonRPCProtocol.data_received = data_received
+
 
 async def shutdown(loop):
     """Cleanup tasks tied to the service's shutdown."""
-    tasks = [t for t in asyncio.all_tasks() if t is not
-             asyncio.current_task()]
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
     [task.cancel() for task in tasks]
 
     await asyncio.gather(*tasks, return_exceptions=True)
     loop.stop()
+
 
 class LspCodeFile:
     def __init__(self, file, code, lsp_client):

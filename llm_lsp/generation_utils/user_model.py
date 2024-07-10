@@ -1,25 +1,24 @@
 import os
 import time
 import warnings
-
-from typing import Optional, Union, List
+from typing import List, Optional, Union
 
 import torch
-import torch.distributed as dist
-
-from transformers import PreTrainedTokenizer
-from transformers import AutoConfig, AutoModelForCausalLM
-from transformers import PretrainedConfig, PreTrainedModel, GenerationMixin
-from transformers.modeling_outputs import CausalLMOutput
-from transformers.generation.utils import GenerateDecoderOnlyOutput, GenerateNonBeamOutput
+from transformers import (AutoConfig, AutoModelForCausalLM, PretrainedConfig,
+                          PreTrainedModel, PreTrainedTokenizer)
 from transformers.generation.logits_process import LogitsProcessorList
-from transformers.generation.stopping_criteria import StoppingCriteriaList, validate_stopping_criteria
+from transformers.generation.stopping_criteria import (
+    StoppingCriteriaList, validate_stopping_criteria)
 from transformers.generation.streamers import BaseStreamer
+from transformers.generation.utils import (GenerateDecoderOnlyOutput,
+                                           GenerateNonBeamOutput)
+from transformers.modeling_outputs import CausalLMOutput
 
 PATH = "watch/to_watch.py"
 
 EOS = "ß"
 PAD = "@"
+
 
 def wait_for_change(path):
     last_modified = os.path.getmtime(path)
@@ -52,18 +51,19 @@ def overwrite(path, text):
             error = e
     raise error
 
+
 class HumanConfig(PretrainedConfig):
     model_type = "human"
 
     def __init__(
-            self,
-            path: str = PATH,
-            eos_token: str = EOS,
-            eos_token_id: int = ord(EOS),
-            pad_token: str = PAD,
-            pad_token_id: int = ord(PAD),
-            **kwargs
-        ):
+        self,
+        path: str = PATH,
+        eos_token: str = EOS,
+        eos_token_id: int = ord(EOS),
+        pad_token: str = PAD,
+        pad_token_id: int = ord(PAD),
+        **kwargs,
+    ):
         if not os.path.isfile(path):
             raise ValueError("Provided path must point to a valid (text) file")
 
@@ -93,7 +93,9 @@ class HumanTokenizer(PreTrainedTokenizer):
 
     @property
     def vocab_size(self) -> int:
-        return self._vocab_size # would actually be a sys.maxunicode, but this is too big
+        return (
+            self._vocab_size
+        )  # would actually be a sys.maxunicode, but this is too big
 
     def get_vocab(self):
         return {self._convert_id_to_token(id): id for id in range(self.vocab_size)}
@@ -134,13 +136,15 @@ class HumanModel(PreTrainedModel):
         self.tok = tok
 
     def forward(
-            self,
-            input_ids,
-            return_dict=True,
-            output_attentions=False,
-            output_hidden_states=False,
-        ):
-        assert return_dict and not output_attentions and not output_attentions, "Do not support other options"
+        self,
+        input_ids,
+        return_dict=True,
+        output_attentions=False,
+        output_hidden_states=False,
+    ):
+        assert (
+            return_dict and not output_attentions and not output_attentions
+        ), "Do not support other options"
         num_tokens = self.tok.vocab_size
         batch_size, seq_length = input_ids.shape
         assert batch_size == 1
@@ -153,17 +157,11 @@ class HumanModel(PreTrainedModel):
         assert len(new_input_ids) > seq_length
         logits[:, -1, new_input_ids[seq_length]] = 10
 
-        return CausalLMOutput(
-            logits=logits
-        )
+        return CausalLMOutput(logits=logits)
 
-    def prepare_inputs_for_generation(
-        self, input_ids, **kwargs
-    ):
-        return {
-            "input_ids": input_ids
-        }
-    
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        return {"input_ids": input_ids}
+
     def greedy_search(self, *args, **kwargs):
         warnings.warn(
             "Calling `greedy_search` directly is deprecated and will be removed in v4.41. Use `generate` or a "
@@ -197,22 +195,46 @@ class HumanModel(PreTrainedModel):
         assert batch_size == 1
 
         # init values
-        logits_processor = logits_processor if logits_processor is not None else LogitsProcessorList()
-        stopping_criteria = stopping_criteria if stopping_criteria is not None else StoppingCriteriaList()
+        logits_processor = (
+            logits_processor if logits_processor is not None else LogitsProcessorList()
+        )
+        stopping_criteria = (
+            stopping_criteria
+            if stopping_criteria is not None
+            else StoppingCriteriaList()
+        )
         if max_length is not None:
             warnings.warn(
                 "`max_length` is deprecated in this function, use"
                 " `stopping_criteria=StoppingCriteriaList([MaxLengthCriteria(max_length=max_length)])` instead.",
                 UserWarning,
             )
-            stopping_criteria = validate_stopping_criteria(stopping_criteria, max_length)
-        pad_token_id = pad_token_id if pad_token_id is not None else self.generation_config.pad_token_id
-        eos_token_id = eos_token_id if eos_token_id is not None else self.generation_config.eos_token_id
+            stopping_criteria = validate_stopping_criteria(
+                stopping_criteria, max_length
+            )
+        pad_token_id = (
+            pad_token_id
+            if pad_token_id is not None
+            else self.generation_config.pad_token_id
+        )
+        eos_token_id = (
+            eos_token_id
+            if eos_token_id is not None
+            else self.generation_config.eos_token_id
+        )
         if isinstance(eos_token_id, int):
             eos_token_id = [eos_token_id]
-        eos_token_id_tensor = torch.tensor(eos_token_id).to(input_ids.device) if eos_token_id is not None else None
-        output_scores = output_scores if output_scores is not None else self.generation_config.output_scores
-        
+        eos_token_id_tensor = (
+            torch.tensor(eos_token_id).to(input_ids.device)
+            if eos_token_id is not None
+            else None
+        )
+        output_scores = (
+            output_scores
+            if output_scores is not None
+            else self.generation_config.output_scores
+        )
+
         return_dict_in_generate = (
             return_dict_in_generate
             if return_dict_in_generate is not None
@@ -221,8 +243,8 @@ class HumanModel(PreTrainedModel):
 
         # init attention / hidden states / scores tuples
         scores = () if (return_dict_in_generate and output_scores) else None
-        from time import sleep
-        #sleep(0.1)
+
+        # sleep(0.1)
         while True:
             next_token_logits = torch.zeros([batch_size, self.tok.vocab_size])
             text = self.tok.decode(input_ids[0])
@@ -230,7 +252,11 @@ class HumanModel(PreTrainedModel):
             overwrite(self.config.path, text)
             wait_for_change(self.config.path)
             new_text = read_path(self.config.path)
-            new_input_ids = torch.tensor(self.tok.encode(new_text), device=input_ids.device, dtype=input_ids.dtype)
+            new_input_ids = torch.tensor(
+                self.tok.encode(new_text),
+                device=input_ids.device,
+                dtype=input_ids.dtype,
+            )
             next_token_logits[:, new_input_ids[-1]] = 10
 
             # pre-process distribution
@@ -245,9 +271,13 @@ class HumanModel(PreTrainedModel):
             next_tokens = torch.argmax(next_tokens_scores, dim=-1)
 
             # update generated ids, model inputs, and length for next step
-            input_ids = torch.cat([new_input_ids[None, :-1], next_tokens[:, None]], dim=-1)
+            input_ids = torch.cat(
+                [new_input_ids[None, :-1], next_tokens[:, None]], dim=-1
+            )
             model_kwargs = self._update_model_kwargs_for_generation(
-                CausalLMOutput(logits=next_token_logits), model_kwargs, is_encoder_decoder=self.config.is_encoder_decoder
+                CausalLMOutput(logits=next_token_logits),
+                model_kwargs,
+                is_encoder_decoder=self.config.is_encoder_decoder,
             )
 
             # if eos_token was found in one sentence, set sentence to finished
@@ -273,10 +303,12 @@ class HumanModel(PreTrainedModel):
     def resize_token_embeddings(self, *args, **kwargs):
         pass
 
+
 HumanConfig.register_for_auto_class()
 AutoConfig.register("human", HumanConfig)
 HumanModel.register_for_auto_class("AutoModelForCausalLM")
 AutoModelForCausalLM.register(HumanConfig, HumanModel)
+
 
 def main():
     config = HumanConfig()
@@ -286,6 +318,7 @@ def main():
     print("Started generation")
     input_ids = model.generate(torch.tensor([tok("abc").input_ids]), max_new_tokens=10)
     print(tok.decode(input_ids[0]))
+
 
 if __name__ == "__main__":
     main()

@@ -1,6 +1,7 @@
-from abc import ABC, abstractmethod, abstractproperty
 import re
+from abc import ABC, abstractmethod, abstractproperty
 from typing import Optional
+
 
 class CodeUtil(ABC):
     @abstractproperty

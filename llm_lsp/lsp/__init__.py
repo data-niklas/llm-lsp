@@ -1,7 +1,9 @@
-from pygls.lsp.client import BaseLanguageClient
-from lsprotocol.types import *
 from os import path
+
 from logzero import logger
+from lsprotocol.types import *  # noqa: F403
+from pygls.lsp.client import BaseLanguageClient
+
 
 def find_venv(root):
     dir = path.join(root, "venv")
@@ -9,9 +11,11 @@ def find_venv(root):
         return dir
     # TODO: add more
 
+
 async def create_lsp_for_language(language: str, directory: str):
     if language == "python":
         return await create_python_lsp(directory)
+
 
 async def create_python_lsp(directory):
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
@@ -34,7 +38,7 @@ async def create_python_lsp(directory):
             logger.debug(diagnostics)
         # logger.debug(params)
 
-    initialize_result = await lsp.initialize_async(
+    _ = await lsp.initialize_async(
         InitializeParams(
             root_path=directory,
             capabilities=ClientCapabilities(
@@ -64,7 +68,7 @@ async def create_python_lsp(directory):
                             tag_support=CompletionClientCapabilitiesCompletionItemTypeTagSupportType(
                                 value_set=[CompletionItemTag.Deprecated]
                             ),
-                            insert_replace_support=True
+                            insert_replace_support=True,
                         )
                     ),
                     publish_diagnostics=PublishDiagnosticsClientCapabilities(
@@ -80,7 +84,7 @@ async def create_python_lsp(directory):
 
     lsp.initialized(InitializedParams())
     logger.info(
-        f"Using python: "
+        "Using python: "
         + path.abspath(path.join(find_venv(directory), "bin", "python"))
     )
     lsp.workspace_did_change_configuration(

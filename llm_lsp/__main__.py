@@ -1,32 +1,17 @@
-from pygls.lsp.client import BaseLanguageClient
-import asyncio
 import argparse
-from transformers import (
-    AutoTokenizer,
-    Pipeline,
-    LogitsProcessorList,
-    StoppingCriteriaList,
-    StoppingCriteria,
-    AutoModel,
-)
-import transformers
-from pygments import highlight
-from pygments.formatters import Terminal256Formatter
-from pygments.lexers import PythonLexer
+import asyncio
+
+import nest_asyncio
 import torch
 from logzero import logger
 from lsprotocol.types import *
-import tempfile
-import shutil
-import os
-from os import path
+from pygments import highlight
+from pygments.formatters import Terminal256Formatter
+from pygments.lexers import PythonLexer
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 from llm_lsp.constants import *
-from typing import Tuple
-import subprocess
 from llm_lsp.generator import Generator
-from transformers import AutoTokenizer, AutoModelForCausalLM
-import nest_asyncio
-from threading import Thread
 
 nest_asyncio.apply()
 
@@ -52,11 +37,8 @@ async def generate_test(model, tokenizer, generation_config, code, repo_root, fi
 
 
 async def test(args):
-    from llm_lsp.generation_utils.user_model import (
-        HumanModel,
-        HumanConfig,
-        HumanTokenizer,
-    )
+    from llm_lsp.generation_utils.user_model import (HumanConfig, HumanModel,
+                                                     HumanTokenizer)
 
     config = HumanConfig("/nfs/home/nloeser_msc2023/llm-lsp-typing-demo/watch.py")
     tokenizer = HumanTokenizer()
@@ -79,7 +61,7 @@ async def test(args):
 
 
 async def main(args):
-    #if True:
+    # if True:
     #    await test(args)
     #    return
     model = AutoModelForCausalLM.from_pretrained(
@@ -87,21 +69,20 @@ async def main(args):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
         device_map="cuda",
-        #attn_implementation="flash_attention_2"
+        # attn_implementation="flash_attention_2"
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
     generator = Generator(model, tokenizer, generation_config)
-    if args.strategy == "COMPLETE":
-        with open(args.file, "r") as f:
-            code = f.read()
-        repo_root = args.directory
-        filename = args.file
-        completed_code = await generator.complete(code, repo_root, filename)
-        code += completed_code
-        hl = highlight_code(code)
-        logger.info("Code:\n##########\n" + hl + "\n##########")
+    with open(args.file, "r") as f:
+        code = f.read()
+    repo_root = args.directory
+    filename = args.file
+    completed_code = await generator.complete(code, repo_root, filename)
+    code += completed_code
+    hl = highlight_code(code)
+    logger.info("Code:\n##########\n" + hl + "\n##########")
 
 
 def parse_args():
@@ -113,7 +94,6 @@ def parse_args():
     parser.add_argument("-f", "--file", default="tests/fastapi.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
-    parser.add_argument("-s", "--strategy", default="COMPLETE")
     return parser.parse_args()
 
 
