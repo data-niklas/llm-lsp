@@ -1,8 +1,8 @@
-from llm_lsp.message_formatters import MessageFormatter
+from llm_lsp.prompt_formatters import PromptFormatter
 from typing import List, Dict, Any
 
 
-class VanillaMessageFormatter(MessageFormatter):
+class VanillaPromptFormatter(PromptFormatter):
     def create_completion_messages(
         self, initial_code: str, system_prompt_enabled: bool, instruction_text: str
     ) -> List[Dict[str, Any]]:

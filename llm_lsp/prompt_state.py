@@ -1,7 +1,7 @@
 from jinja2 import TemplateError
 from typing import List, Dict, Any
 from transformers import AutoTokenizer
-from llm_lsp.message_formatters import MessageFormatter
+from llm_lsp.prompt_formatters import PromptFormatter
 from dataclasses import dataclass
 
 @dataclass
@@ -10,11 +10,11 @@ class Comment:
     interrupt: str
     context: Any
 
-class Prompt:
-    def __init__(self, tokenizer: AutoTokenizer, message_formatter: MessageFormatter, initial_text: str):
+class PromptState:
+    def __init__(self, tokenizer: AutoTokenizer, prompt_formatter: PromptFormatter, initial_text: str):
         self.tokenizer = tokenizer
         self.initial_text = initial_text
-        self.message_formatter = message_formatter
+        self.prompt_formatter = prompt_formatter
         self.instructions = []
         self._create_completion_prompt()
 
@@ -22,11 +22,11 @@ class Prompt:
         """Create a complete prompt with special tokens and ready to use for generation"""
         i = "\n".join([c.comment + "." for c in self.instructions])
         try:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, True, i)
+            messages = self.prompt_formatter.create_completion_messages(self.initial_text, True, i)
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         # new_code is not part of the prompt, but part of the output
         except TemplateError:
-            messages = self.message_formatter.create_completion_messages(self.initial_text, False, i)
+            messages = self.prompt_formatter.create_completion_messages(self.initial_text, False, i)
             prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         self.initial_prompt = prompt
         self.code_prefix = self.initial_text

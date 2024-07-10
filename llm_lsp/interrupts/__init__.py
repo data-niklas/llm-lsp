@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Any, Optional
 from abc import ABC, abstractmethod
-from llm_lsp.prompt import Prompt, Comment
+from llm_lsp.prompt_state import Comment
 from transformers import StoppingCriteria
 from torch import Tensor
 from llm_lsp.code_utils import CodeUtil

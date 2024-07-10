@@ -4,6 +4,7 @@ MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 #MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 #MODEL = "google/codegemma-7b-it"
 #MODEL = "microsoft/Phi-3-mini-4k-instruct"
+MODEL = "NTQAI/Nxcode-CQ-7B-orpo"
 
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {

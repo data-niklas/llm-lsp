@@ -80,7 +80,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self,
         tokenizer,
         lsp_clients,
-        prompt_utils,
+        prompt_states,
         filenames,
         interrupt_token_id,
         expand_size,
@@ -89,7 +89,7 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_clients: BaseLanguageClient = lsp_clients
-        self.prompt_utils = prompt_utils
+        self.prompt_states = prompt_states
         self.filenames = filenames
         self.signature_cache = {}
         self.expand_size = expand_size
@@ -108,10 +108,10 @@ class LspLogitsProcessor(LogitsProcessor):
     def current_code(self, i, input_ids: LongTensor) -> str:
         """The complete generated code at this point. This includes the starting code and the generated code."""
         generated_code_with_prompt = self.ids_to_text(input_ids)
-        prompt_util_index = i
+        prompt_state_index = i
         if self.beam_tracker.is_beam_search():
-            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
-        code = self.prompt_utils[prompt_util_index].get_whole_code(
+            prompt_state_index = self.beam_tracker.get_final_beam_indices()[i]
+        code = self.prompt_states[prompt_state_index].get_whole_code(
             generated_code_with_prompt
         )
         return code
@@ -293,11 +293,11 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         if len(deprecated_completions) == 0:
             return True
-        prompt_util_index = i
+        prompt_state_index = i
         if self.beam_tracker.is_beam_search():
-            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
-        prompt_util = self.prompt_utils[prompt_util_index]
-        comment = prompt_util.get_comment_of_interrupt(DEPRECATION_COMMENT_TYPE)
+            prompt_state_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_state = self.prompt_states[prompt_state_index]
+        comment = prompt_state.get_comment_of_interrupt(DEPRECATION_COMMENT_TYPE)
         if comment is None:
             return False
         # TODO: check if comment actually in line before
@@ -310,11 +310,11 @@ class LspLogitsProcessor(LogitsProcessor):
         #    return True
         #        if len(completions) < 4:
         #            return True
-        prompt_util_index = i
+        prompt_state_index = i
         if self.beam_tracker.is_beam_search():
-            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
-        prompt_util = self.prompt_utils[prompt_util_index]
-        comment = prompt_util.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
+            prompt_state_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_state = self.prompt_states[prompt_state_index]
+        comment = prompt_state.get_comment_of_interrupt(COMPLETION_COMMENT_TYPE)
         if comment is None:
             if len(completions) == 0:
                 return True
@@ -330,11 +330,11 @@ class LspLogitsProcessor(LogitsProcessor):
     ):
         if signature_help is None:  # or len(signature_help.signatures) == 0:
             return True
-        prompt_util_index = i
+        prompt_state_index = i
         if self.beam_tracker.is_beam_search():
-            prompt_util_index = self.beam_tracker.get_final_beam_indices()[i]
-        prompt_util = self.prompt_utils[prompt_util_index]
-        comment = prompt_util.get_comment_of_interrupt(SIGNATURE_COMMENT_TYPE)
+            prompt_state_index = self.beam_tracker.get_final_beam_indices()[i]
+        prompt_state = self.prompt_states[prompt_state_index]
+        comment = prompt_state.get_comment_of_interrupt(SIGNATURE_COMMENT_TYPE)
         if comment is None:
             if len(signature_help.signatures) == 0:
                 return True

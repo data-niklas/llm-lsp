@@ -1,5 +1,5 @@
 from llm_lsp.interrupts import InterruptType
-from llm_lsp.prompt import Prompt, Comment
+from llm_lsp.prompt_state import Comment
 from llm_lsp.code_utils import CodeUtil
 from typing import Any, Optional
 import importlib

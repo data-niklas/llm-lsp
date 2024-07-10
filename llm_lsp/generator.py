@@ -7,10 +7,10 @@ import tree_sitter_python
 PY_LANGUAGE = Language(tree_sitter_python.language(), "python")
 # from llm_lsp.lsp_client import LspClient
 from typing import Dict, Any, Optional, List
-from llm_lsp.prompt import Prompt
-from llm_lsp.message_formatters import MessageFormatter
-from llm_lsp.message_formatters.default import DefaultMessageFormatter
-from llm_lsp.message_formatters.vanilla import VanillaMessageFormatter
+from llm_lsp.prompt_state import PromptState
+from llm_lsp.prompt_formatters import PromptFormatter
+from llm_lsp.prompt_formatters.default import DefaultPromptFormatter
+from llm_lsp.prompt_formatters.vanilla import VanillaPromptFormatter
 from pygls.lsp.client import BaseLanguageClient
 from llm_lsp.interrupts import InterruptType, InterruptStoppingCriteria, Interrupt
 from llm_lsp.interrupts.deprecation import DeprecationInterrupt, DEPRECATION_COMMENT_TYPE
@@ -20,7 +20,7 @@ from llm_lsp.interrupts.completion import (
 )
 from llm_lsp.lsp import create_lsp_for_language
 from llm_lsp.interrupt_mixin import resume
-from llm_lsp.lsp.logits_guider import LspLogitsProcessor
+from llm_lsp.lsp.lsp_processor import LspLogitsProcessor
 from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
 from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.code_utils import CodeUtil
@@ -50,7 +50,7 @@ class Generator:
         model: GenerationMixin,
         tokenizer: AutoTokenizer,
         generation_config: Dict[str, Any],
-        message_formatter: MessageFormatter = None,
+        prompt_formatter: PromptFormatter = None,
         interrupts: List[InterruptType] = DEFAULT_INTERRUPTS,
         disabled=False,
     ):
@@ -58,11 +58,11 @@ class Generator:
         self.model = model
         self.tokenizer = tokenizer
         self.generation_config = generation_config
-        if message_formatter is None:
-            message_formatter = (
-                VanillaMessageFormatter() if disabled else DefaultMessageFormatter()
+        if prompt_formatter is None:
+            prompt_formatter = (
+                VanillaPromptFormatter() if disabled else DefaultPromptFormatter()
             )
-        self.message_formatter = message_formatter
+        self.prompt_formatter = prompt_formatter
         self.interrupts = interrupts
         self.disabled = disabled
         self.beam_tracker = BeamTracker()
@@ -186,28 +186,28 @@ class Generator:
                 **model_kwargs,
             )
 
-    def track_beam_selections(self, prompt_utils, code_utils):
+    def track_beam_selections(self, prompt_states, code_utils):
         """Beam indices for each batch. Access the selected beams using batch_index * batch_size + beam_index_in_batch
 
         Args:
             beam_indices (_type_): _description_
         """
         # TODO: add batching
-        new_prompt_utils = []
+        new_prompt_states = []
         new_codeutils = []
         indices = self.beam_tracker.get_final_beam_indices()
         a = None
         for i in range(len(indices)):
             index = indices[i]
-            prompt_util = prompt_utils[index]
+            prompt_state = prompt_states[index]
             code_util = code_utils[index]
-            prompt_util_copy = deepcopy(prompt_util)
-            new_prompt_utils.append(prompt_util_copy)
+            prompt_state_copy = deepcopy(prompt_state)
+            new_prompt_states.append(prompt_state_copy)
             new_codeutils.append(deepcopy(code_util))
 
         # Change in place
-        for i in range(len(prompt_utils)):
-            prompt_utils[i] = new_prompt_utils[i]
+        for i in range(len(prompt_states)):
+            prompt_states[i] = new_prompt_states[i]
             code_utils[i] = new_codeutils[i]
         a = None
 
@@ -231,11 +231,11 @@ class Generator:
         self,
         input_ids,
         batch_size,
-        logits_guider,
+        lsp_processor,
         boundary_logits_processor,
         comments_logits_processor,
         config,
-        prompt_utils,
+        prompt_states,
         code_utils,
     ):
         """
@@ -243,11 +243,11 @@ class Generator:
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
         logits_processor = [
-            logits_guider,
+            lsp_processor,
             boundary_logits_processor,
             comments_logits_processor,
         ]
-        # logits_processor = [logits_guider, comments_logits_processor]
+        # logits_processor = [lsp_processor, comments_logits_processor]
         kwargs = {}
         if "pad_token_id" not in config:
             kwargs["pad_token_id"] = (
@@ -272,14 +272,14 @@ class Generator:
         )
         generated_sequences = generated_result["sequences"]
 
-        if "beam_input_ids" in generated_result and logits_guider.interrupt is not None:
+        if "beam_input_ids" in generated_result and lsp_processor.interrupt is not None:
             beam_input_ids = generated_result["beam_input_ids"]
             # Remove the last token to fix top-k logits warper selecting nonsensical tokens
             # This bug occurs when the interrupted beam selects an interrupt token with a high logits value and top-k samples from all other tokens randomly
-            logits_guider.interrupt.input_ids = beam_input_ids[:, :-1]
+            lsp_processor.interrupt.input_ids = beam_input_ids[:, :-1]
 
         if self.beam_tracker.is_beam_search():
-            self.track_beam_selections(prompt_utils, code_utils)
+            self.track_beam_selections(prompt_states, code_utils)
         # TODO: Check if this is always zero, as the top beam (the one with eos) might be at the "top" with index 0
 
         last_token_ids = generated_sequences[0]
@@ -298,12 +298,12 @@ class Generator:
         self,
         completions,
         deprecation_text,
-        message_formatter: MessageFormatter,
+        prompt_formatter: PromptFormatter,
         code_util: CodeUtil,
         code,
     ):
         wrapped_code = code_util.wrap_in_code_block(code)
-        messages = message_formatter.create_completion_chooser_message(
+        messages = prompt_formatter.create_completion_chooser_message(
             wrapped_code, False, completions, deprecation_text
         )
         prompt = self.tokenizer.apply_chat_template(
@@ -322,9 +322,9 @@ class Generator:
         return ""
 
     def edit_generation_text_for_completion(
-        self, decoded_text, prompt_util, interrupt, code_util
+        self, decoded_text, prompt_state, interrupt, code_util
     ):
-        generated_code = prompt_util.get_whole_code(decoded_text)
+        generated_code = prompt_state.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
         if interrupt_type.type_name() == COMPLETION_COMMENT_TYPE:
             dep_interrupt_type = [
@@ -336,7 +336,7 @@ class Generator:
             generated_code += self.determine_next_symbol_from_completions(
                 interrupt.interrupt_context["comp"],
                 comment,
-                prompt_util.message_formatter,
+                prompt_state.prompt_formatter,
                 code_util,
                 generated_code,
             )
@@ -344,8 +344,8 @@ class Generator:
             comment = interrupt_type.create_comment(
                 interrupt.interrupt_context, code_util
             )
-            prompt_util.add_comment(comment, interrupt_type.type_name())
-        edited_prompt = prompt_util.format(generated_code)
+            prompt_state.add_comment(comment, interrupt_type.type_name())
+        edited_prompt = prompt_state.format(generated_code)
         return edited_prompt
 
     def edit_input_ids(self, interrupt, edited_prompt, interrupt_beam_index):
@@ -363,11 +363,11 @@ class Generator:
         input_ids = self.remove_nd_padding(input_ids)
         return input_ids
 
-    def create_lsp_logits_processor(self, lsps, prompt_utils, filenames, expand_size):
+    def create_lsp_logits_processor(self, lsps, prompt_states, filenames, expand_size):
         return LspLogitsProcessor(
             self.tokenizer,
             lsps,
-            prompt_utils,
+            prompt_states,
             filenames,
             self.interrupt_token_id(),
             expand_size,
@@ -403,11 +403,11 @@ class Generator:
         beam_size = config["num_beams"] if "num_beams" in config else 1
         # TODO: allow higher batch size
         lsp = await create_lsp_for_language("python", repo_root)
-        prompt_utils = [
-            Prompt(self.tokenizer, self.message_formatter, code)
+        prompt_states = [
+            PromptState(self.tokenizer, self.prompt_formatter, code)
             for i in range(batch_size * beam_size)
         ]
-        prompt = prompt_utils[0].format(code)
+        prompt = prompt_states[0].format(code)
 
         parser = Parser()
         parser.set_language(PY_LANGUAGE)
@@ -416,8 +416,8 @@ class Generator:
 
         start_timestamp = time.time()
         config = self.fix_config(config, prompt)
-        logits_guider = self.create_lsp_logits_processor(
-            [lsp], prompt_utils, [filename], beam_size
+        lsp_processor = self.create_lsp_logits_processor(
+            [lsp], prompt_states, [filename], beam_size
         )
         boundary_logits_processor = self.create_boundary_logits_processor()
         comments_logits_processor = self.create_comments_logits_processor()
@@ -429,33 +429,33 @@ class Generator:
             decoded_text = self.resume_generation(
                 input_ids,
                 batch_size,
-                logits_guider,
+                lsp_processor,
                 boundary_logits_processor,
                 comments_logits_processor,
                 config,
-                prompt_utils,
+                prompt_states,
                 code_utils,
             )
-            interrupt = logits_guider.interrupt
+            interrupt = lsp_processor.interrupt
             if interrupt is None:
-                prompt_util = prompt_utils[0]
-                result_code = prompt_util.get_whole_code(decoded_text)
-                return result_code[len(prompt_util.initial_text) :]
+                prompt_state = prompt_states[0]
+                result_code = prompt_state.get_whole_code(decoded_text)
+                return result_code[len(prompt_state.initial_text) :]
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
-            prompt_util = prompt_utils[stopped_beam_index]
+            prompt_state = prompt_states[stopped_beam_index]
             if max_interrupts is not None:
                 if max_interrupts == 0:
-                    result_code = prompt_util.get_whole_code(decoded_text)
-                    return result_code[len(prompt_util.initial_text) :]
+                    result_code = prompt_state.get_whole_code(decoded_text)
+                    return result_code[len(prompt_state.initial_text) :]
                 max_interrupts = max_interrupts - 1
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
-                decoded_text, prompt_util, interrupt, code_util
+                decoded_text, prompt_state, interrupt, code_util
             )
             input_ids = self.edit_input_ids(
                 interrupt, edited_prompt, stopped_beam_index
             )
-            logits_guider.resume()
+            lsp_processor.resume()
             # TODO: move into update config for resumption
             if "max_time" in config:
                 current_timestamp = time.time()
@@ -463,5 +463,5 @@ class Generator:
                 config["max_time"] -= time_for_iteration
                 start_timestamp = current_timestamp
                 if config["max_time"] < 0:
-                    result_code = prompt_util.get_whole_code(decoded_text)
-                    return result_code[len(prompt_util.initial_text) :]
+                    result_code = prompt_state.get_whole_code(decoded_text)
+                    return result_code[len(prompt_state.initial_text) :]
