@@ -7,7 +7,7 @@ from transformers import AutoTokenizer, GenerationMixin
 
 from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.config import LspGenerationConfig
-from llm_lsp.constants import INTERRUPT_TOKEN
+from llm_lsp.constants import INTERRUPT_TOKEN, PAD_TOKEN
 from llm_lsp.generation_utils.beam_tracking import BeamTracker
 from llm_lsp.interrupts import InterruptStoppingCriteria, InterruptType
 from llm_lsp.interrupts.completion import CompletionInterrupt
@@ -31,8 +31,6 @@ DEFAULT_INTERRUPTS = [
     SignatureInterrupt(),
     CompletionInterrupt(),
 ]
-
-PAD_TOKEN = "[PAD]"
 
 
 class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin):

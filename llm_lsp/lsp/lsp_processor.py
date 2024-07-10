@@ -84,7 +84,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.interrupt_token_id = interrupt_token_id
         self.interrupt = None
         self.beam_tracker = beam_tracker
-        self.disabled = not config.lsp_processor
+        self.config = config
 
     def ids_to_text(self, input_ids: LongTensor) -> str:
         # remove padding
@@ -203,6 +203,17 @@ class LspLogitsProcessor(LogitsProcessor):
         for token in deprecated:
             scores[token] = min(minimum - RANK_DELTA, scores[token].item())
         return scores
+
+    def mask_other_tokens(
+        self, scores, non_deprecated
+    ):
+        if len(non_deprecated) == 0:
+            return scores
+        return torch.where(
+            torch.tensor([True if i in non_deprecated else False for i in range(scores.shape[0])]),
+            scores,
+            float("-inf") * torch.ones(scores.shape[0])
+        )
 
     def apply_constant_adjustments(
         self, scores, non_deprecated_unique_first_tokens, deprecated_unique_first_tokens
@@ -485,11 +496,16 @@ class LspLogitsProcessor(LogitsProcessor):
                 non_deprecated_first_tokens,
                 deprecated_first_tokens,
             )
+            if self.config.masked_gen:
+                scores = self.mask_other_tokens(
+                    scores,
+                    non_deprecated_first_tokens
+                )
         return scores
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:
         """Returns a 2d FloatTensor which has scores for every batch"""
-        if self.disabled:
+        if not self.config.lsp_processor or not self.config.enabled:
             return scores
         for i in range(input_ids.shape[0]):
             try:

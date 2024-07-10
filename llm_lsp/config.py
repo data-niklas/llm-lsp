@@ -8,6 +8,8 @@ class LspGenerationConfig:
     lsp_processor: bool = True
     chat_history_log_file: Optional[str] = None
     predict_correct_completion_symbol: bool = True
+    force_custom_pad: bool = False
+    masked_gen: bool = True
     enabled: bool = (
         True  # quick setting to disable all processors, overrides other settings
     )

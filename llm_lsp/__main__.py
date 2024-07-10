@@ -60,13 +60,13 @@ async def test(args):
         hl = highlight_code(code)
         logger.info("Code:\n##########\n" + hl + "\n##########")
 
-
 async def main(args):
     # if True:
     #    await test(args)
     #    return
     config = LspGenerationConfig(
         chat_history_log_file=args.chat_history_log_file,
+        masked_gen=True,
     )
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,
@@ -76,7 +76,6 @@ async def main(args):
         # attn_implementation="flash_attention_2"
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
-    #tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
     generator = Generator(model, tokenizer, generation_config, config=config)
     with open(args.file, "r") as f:
