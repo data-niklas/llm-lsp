@@ -19,7 +19,4 @@ pygls @ git+https://github.com/openlawlibrary/pygls.git
 
 marisa_trie
 
-tree-sitter
-tree-sitter-python
-
 docstring_parser

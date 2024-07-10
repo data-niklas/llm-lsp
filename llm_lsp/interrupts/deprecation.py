@@ -66,7 +66,7 @@ class DeprecationInterrupt(InterruptType):
         if len(context) == 0:
             return None
         used_context = [a for a in context]
-        used_context.sort(key=lambda x: x.sort_text, reverse=True)
+        used_context.sort(key=lambda x: x.sort_text)
         # context = context[-3:]
         notes = [
             # "The following variable is deprecated, use an alternative: " +

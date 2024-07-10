@@ -24,6 +24,7 @@ from llm_lsp.prompt_formatters import PromptFormatter
 from llm_lsp.prompt_formatters.default import DefaultPromptFormatter
 from llm_lsp.prompt_formatters.vanilla import VanillaPromptFormatter
 from llm_lsp.prompt_state import PromptState
+from llm_lsp.mixins.log_mixin import LogMixin
 
 DEFAULT_INTERRUPTS = [
     DeprecationInterrupt(),
@@ -34,7 +35,7 @@ DEFAULT_INTERRUPTS = [
 PAD_TOKEN = "[PAD]"
 
 
-class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
+class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin):
     def __init__(
         self,
         model: GenerationMixin,
@@ -59,13 +60,11 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
         self.add_special_tokens()
 
     def add_special_tokens(self):
-        additional_special_tokens = [INTERRUPT_TOKEN]  # , PAD_TOKEN]
+        additional_special_tokens = [INTERRUPT_TOKEN, PAD_TOKEN]
         self.tokenizer.add_special_tokens(
             {"additional_special_tokens": additional_special_tokens}
         )
-        # print(self.tokenizer.pad_token_id)
-        # (self.tokenizer.convert_ids_to_tokens(self.tokenizer.pad_token_id))
-        # self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
+        self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
         self.model.resize_token_embeddings(len(self.tokenizer))
 
     def decode_tokens_remove_interrupt(self, interrupt_token_id, output_ids):
@@ -195,9 +194,6 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
     def create_comments_logits_processor(self):
         return CommentsLogitsProcessor(self.tokenizer)
 
-    async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
-        with self.device_placement():
-            return await self._complete(code, repo_root, filename)
 
     def fix_config(self, config, prompt):
         if "max_new_tokens" in config:
@@ -207,6 +203,8 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
         return config
 
     async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
+        self.log_code(code, "START")
+        interrupt_count = 0
         batch_size = 1
         config = self.generation_config.copy()
         max_interrupts = (
@@ -252,12 +250,14 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
             if interrupt is None:
                 prompt_state = prompt_states[0]
                 result_code = prompt_state.get_whole_code(decoded_text)
+                self.log_code(result_code, "END")
                 return result_code[len(prompt_state.initial_text) :]
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
             prompt_state = prompt_states[stopped_beam_index]
             if max_interrupts is not None:
                 if max_interrupts == 0:
                     result_code = prompt_state.get_whole_code(decoded_text)
+                    self.log_code(result_code, "END")
                     return result_code[len(prompt_state.initial_text) :]
                 max_interrupts = max_interrupts - 1
             code_util = code_utils[stopped_beam_index]
@@ -269,6 +269,7 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
             )
             lsp_processor.resume()
             # TODO: move into update config for resumption
+            interrupt_count += 0
             if "max_time" in config:
                 current_timestamp = time.time()
                 time_for_iteration = current_timestamp - start_timestamp
@@ -276,4 +277,11 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin):
                 start_timestamp = current_timestamp
                 if config["max_time"] < 0:
                     result_code = prompt_state.get_whole_code(decoded_text)
+                    self.log_code(result_code, "END")
                     return result_code[len(prompt_state.initial_text) :]
+            self.log_interruption(input_ids, interrupt_count)
+
+
+    async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
+        with self.device_placement():
+            return await self._complete(code, repo_root, filename)

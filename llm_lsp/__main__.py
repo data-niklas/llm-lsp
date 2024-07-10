@@ -12,6 +12,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from llm_lsp.constants import *
 from llm_lsp.generator import Generator
+from llm_lsp.config import LspGenerationConfig
 
 nest_asyncio.apply()
 
@@ -64,6 +65,9 @@ async def main(args):
     # if True:
     #    await test(args)
     #    return
+    config = LspGenerationConfig(
+        chat_history_log_file=args.chat_history_log_file,
+    )
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,
         trust_remote_code=True,
@@ -74,7 +78,7 @@ async def main(args):
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     generation_config = GLOBAL_CONFIGURATION
-    generator = Generator(model, tokenizer, generation_config)
+    generator = Generator(model, tokenizer, generation_config, config=config)
     with open(args.file, "r") as f:
         code = f.read()
     repo_root = args.directory
@@ -91,9 +95,10 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/fastapi.py")
+    parser.add_argument("-f", "--file", default="tests/pydantic_1.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
+    parser.add_argument("-v", "--chat_history_log_file", default=None)
     return parser.parse_args()
 
 

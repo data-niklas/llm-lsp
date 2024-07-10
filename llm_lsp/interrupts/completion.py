@@ -61,10 +61,11 @@ class CompletionInterrupt(InterruptType):
         return COMPLETION_COMMENT_TYPE
 
     def create_comment(self, context: Any, code_util: CodeUtil) -> Optional[Comment]:
-        if len(context) == 0:
+        completion_context = context["completion"]
+        if len(completion_context) == 0:
             return None
-        used_context = [item for item in context]
-        used_context.sort(key=lambda x: x.sort_text, reverse=True)
+        used_context = [item for item in completion_context]
+        used_context.sort(key=lambda x: x.sort_text)
         notes = [
             "Hint: The following symbols are code completion entries. Use the appropriate symbol to complete the current code: "
             + ", ".join([item.insert_text for item in used_context])

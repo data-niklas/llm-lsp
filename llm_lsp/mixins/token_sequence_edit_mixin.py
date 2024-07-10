@@ -15,15 +15,15 @@ class TokenSequenceEditMixin(PaddingMixin):
     ):
         generated_code = prompt_state.get_whole_code(decoded_text)
         interrupt_type = self.find_interrupt_type(interrupt)
-        if interrupt_type.type_name() == COMPLETION_COMMENT_TYPE:
+        if interrupt_type.type_name() == COMPLETION_COMMENT_TYPE and self.config.predict_correct_completion_symbol:
             dep_interrupt_type = [
                 i for i in self.interrupts if i.type_name() == DEPRECATION_COMMENT_TYPE
             ][0]
             comment = dep_interrupt_type.create_comment(
-                interrupt.interrupt_context["dep"], code_util
+                interrupt.interrupt_context["deprecation"], code_util
             )
             generated_code += self.determine_next_symbol_from_completions(
-                interrupt.interrupt_context["comp"],
+                interrupt.interrupt_context["completion"],
                 comment,
                 prompt_state.prompt_formatter,
                 code_util,
@@ -73,6 +73,7 @@ class TokenSequenceEditMixin(PaddingMixin):
             messages, tokenize=False, add_generation_prompt=True
         )
         prompt += "`"
+        self.log_code(prompt, "PREDICT CORRECT COMPLETION SYMBOL START")
         input_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
         generation_result = self.model.generate(
             input_ids, use_cache=True, **self.generation_config
@@ -80,6 +81,8 @@ class TokenSequenceEditMixin(PaddingMixin):
         generation_text = self.tokenizer.decode(
             generation_result[0][len(input_ids[0]) :], skip_special_tokens=True
         )
+        predicted_completion_symbol = ""
         if generation_text.endswith("`"):
-            return generation_text.split("`")[0]
-        return ""
+            predicted_completion_symbol = generation_text.split("`")[0]
+        self.log_code(predicted_completion_symbol, "PREDICT CORRECT COMPLETION SYMBOL END")
+        return predicted_completion_symbol

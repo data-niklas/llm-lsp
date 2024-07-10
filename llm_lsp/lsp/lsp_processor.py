@@ -308,8 +308,8 @@ class LspLogitsProcessor(LogitsProcessor):
                 return True
             return False
         return eq_completions_items(
-            completions, comment.context
-        ) or in_completion_items(completions, comment.context)
+            completions, comment.context["completion"]
+        ) or in_completion_items(completions, comment.context["completion"])
 
     def check_signature_documentation_included(
         self, i, trigger_phrase, current_code: str, signature_help
@@ -435,8 +435,8 @@ class LspLogitsProcessor(LogitsProcessor):
                 ):
                     self.trigger_interrupt(
                         {
-                            "comp": non_deprecated_completions,
-                            "dep": deprecated_completions,
+                            "completion": non_deprecated_completions,
+                            "deprecation": deprecated_completions,
                         },
                         COMPLETION_COMMENT_TYPE,
                     )
