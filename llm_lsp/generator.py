@@ -39,7 +39,6 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         model: GenerationMixin,
         tokenizer: AutoTokenizer,
         generation_config: Dict[str, Any],
-        prompt_formatter: PromptFormatter = None,
         interrupts: List[InterruptType] = DEFAULT_INTERRUPTS,
         config: LspGenerationConfig = LspGenerationConfig(),
     ):
@@ -47,11 +46,9 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         self.model = model
         self.tokenizer = tokenizer
         self.generation_config = generation_config
-        if prompt_formatter is None:
-            prompt_formatter = (
-                VanillaPromptFormatter() if config.is_disabled() else DefaultPromptFormatter()
-            )
-        self.prompt_formatter = prompt_formatter
+        self.prompt_formatter = (
+            VanillaPromptFormatter() if config.is_disabled() else DefaultPromptFormatter()
+        )
         self.interrupts = interrupts
         self.config = config
         self.beam_tracker = BeamTracker()
