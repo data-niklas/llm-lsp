@@ -34,8 +34,8 @@ async def shutdown(loop):
 
 
 class LspCodeFile:
-    def __init__(self, file, code, lsp_client):
-        self.path = file + "_" + str(uuid.uuid1())
+    def __init__(self, file_name, code, lsp_client):
+        self.path = file_name + "_" + str(uuid.uuid1())
         self.uri = "file://" + path.abspath(self.path)
         self.text_document_item = TextDocumentItem(
             uri=self.uri,

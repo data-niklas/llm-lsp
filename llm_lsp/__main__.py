@@ -31,10 +31,10 @@ def highlight_code(code):
     return highlight(code, PythonLexer(), Terminal256Formatter())
 
 
-async def generate_test(model, tokenizer, generation_config, code, repo_root, filename):
+async def generate_test(model, tokenizer, generation_config, code, repo_root, file_name):
     generator = Generator(model, tokenizer, generation_config)
 
-    return await generator.complete(code, repo_root, filename)
+    return await generator.complete(code, repo_root, file_name)
 
 
 async def test(args):
@@ -54,8 +54,8 @@ async def test(args):
         with open(args.file, "r") as f:
             code = f.read()
         repo_root = args.directory
-        filename = args.file
-        completed_code = await generator.complete(code, repo_root, filename)
+        file_name = args.file
+        completed_code = await generator.complete(code, repo_root, file_name)
         code += completed_code
         hl = highlight_code(code)
         logger.info("Code:\n##########\n" + hl + "\n##########")
@@ -81,8 +81,8 @@ async def main(args):
     with open(args.file, "r") as f:
         code = f.read()
     repo_root = args.directory
-    filename = args.file
-    completed_code = await generator.complete(code, repo_root, filename)
+    file_name = args.file
+    completed_code = await generator.complete(code, repo_root, file_name)
     code += completed_code
     hl = highlight_code(code)
     logger.info("Code:\n##########\n" + hl + "\n##########")

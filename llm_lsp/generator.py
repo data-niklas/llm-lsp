@@ -1,5 +1,6 @@
 import time
 from copy import deepcopy
+
 # from llm_lsp.lsp_client import LspClient
 from typing import Any, Dict, List
 
@@ -13,7 +14,7 @@ from llm_lsp.interrupts import InterruptStoppingCriteria, InterruptType
 from llm_lsp.interrupts.completion import CompletionInterrupt
 from llm_lsp.interrupts.deprecation import DeprecationInterrupt
 from llm_lsp.interrupts.signature import SignatureInterrupt
-from llm_lsp.lsp import create_lsp_for_language
+from llm_lsp.lsp import create_lsp_for_language, language_from_extension
 from llm_lsp.lsp.boundary_logits_processor import BoundaryLogitsProcessor
 from llm_lsp.lsp.comments_processor import CommentsLogitsProcessor
 from llm_lsp.lsp.lsp_processor import LspLogitsProcessor
@@ -47,7 +48,9 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         self.tokenizer = tokenizer
         self.generation_config = generation_config
         self.prompt_formatter = (
-            VanillaPromptFormatter() if config.is_disabled() else DefaultPromptFormatter()
+            VanillaPromptFormatter()
+            if config.is_disabled()
+            else DefaultPromptFormatter()
         )
         self.interrupts = interrupts
         self.config = config
@@ -62,7 +65,9 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             {"additional_special_tokens": additional_special_tokens}
         )
         if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(PAD_TOKEN)
+            self.tokenizer.pad_token_id = self.tokenizer.convert_tokens_to_ids(
+                PAD_TOKEN
+            )
         self.model.resize_token_embeddings(len(self.tokenizer))
 
     def decode_tokens_remove_interrupt(self, interrupt_token_id, output_ids):
@@ -129,6 +134,7 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
         """
         stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
+        lsp_processor.resume()
         logits_processors = [lsp_processor]
         if self.config.boundary_processor:
             logits_processors.append(boundary_logits_processor)
@@ -174,12 +180,12 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         )
         return decoded_text
 
-    def create_lsp_logits_processor(self, lsps, prompt_states, filenames, expand_size):
+    def create_lsp_logits_processor(self, lsps, prompt_states, file_names, expand_size):
         return LspLogitsProcessor(
             self.tokenizer,
             lsps,
             prompt_states,
-            filenames,
+            file_names,
             self.interrupt_token_id(),
             expand_size,
             self.beam_tracker,
@@ -192,43 +198,71 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
     def create_comments_logits_processor(self):
         return CommentsLogitsProcessor(self.tokenizer)
 
-
     def fix_config(self, config, prompt):
         if "max_new_tokens" in config:
             prompt_len = len(self.tokenizer(prompt).input_ids)
             config["max_length"] = prompt_len + config["max_new_tokens"]
             del config["max_new_tokens"]
+        if "max_interrupts" in config:
+            del config["max_interrupts"]
         return config
 
-    async def _complete(self, code: str, repo_root: str, filename: str = "code.py"):
-        self.log_code(code, "START")
-        interrupt_count = 0
-        batch_size = 1
+    def initialize_generation_config(self):
         config = self.generation_config.copy()
         max_interrupts = (
             config["max_interrupts"] if "max_interrupts" in config else None
         )
-        if max_interrupts is not None:
-            del config["max_interrupts"]
         beam_size = config["num_beams"] if "num_beams" in config else 1
-        # TODO: allow higher batch size
-        lsp = await create_lsp_for_language("python", repo_root)
+
+    def initialize_generation_state(self, code: str, repo_root: str, file_name: str):
+        batch_size = 1
+        boundary_logits_processor = self.create_boundary_logits_processor()
+        comments_logits_processor = self.create_comments_logits_processor()
+        language = language_from_extension(file_name)
+        if language is None:
+            raise "The language is not supported"
+        lsp = await create_lsp_for_language(language, repo_root)
         prompt_states = [
             PromptState(self.tokenizer, self.prompt_formatter, code)
             for i in range(batch_size * beam_size)
         ]
-        prompt = prompt_states[0].format(code)
 
         # NOTE: They need to be stored per beam, as each beam may have different comments, AND THEY NEED TO BE SHUFFLED ACCORDING TO THE SELECTED BEAMS IN THE BEAMSEARCHSCORER
         code_utils = [PythonCodeUtil() for i in range(batch_size * beam_size)]
+        lsp_processor = self.create_lsp_logits_processor(
+            [lsp], prompt_states, [file_name], beam_size
+        )
+        return (
+            batch_size,
+            boundary_logits_processor,
+            comments_logits_processor,
+            lsp_processor,
+            prompt_states,
+            code_utils,
+        )
+
+    def retrieve_final_code(self, prompt_state: PromptState, decoded_text: str) -> str:
+        result_code = prompt_state.get_whole_code(decoded_text)
+        self.log_code(result_code, "END")
+        return result_code[len(prompt_state.initial_text) :]
+
+    async def _complete(self, code: str, repo_root: str, file_name: str = "code.py"):
+        self.log_code(code, "START")
+        interrupt_count = 0
+        # TODO: allow higher batch size
+        (
+            batch_size,
+            boundary_logits_processor,
+            comments_logits_processor,
+            lsp_processor,
+            prompt_states,
+            code_utils,
+        ) = self.initialize_generation_state(code, repo_root, file_name)
+
+        config = self.fix_config(config, prompt)
 
         start_timestamp = time.time()
-        config = self.fix_config(config, prompt)
-        lsp_processor = self.create_lsp_logits_processor(
-            [lsp], prompt_states, [filename], beam_size
-        )
-        boundary_logits_processor = self.create_boundary_logits_processor()
-        comments_logits_processor = self.create_comments_logits_processor()
+        prompt = prompt_states[0].format(code)
         input_ids = self.tokenizer(
             prompt, return_tensors="pt", add_special_tokens=False
         ).input_ids
@@ -247,16 +281,12 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             interrupt = lsp_processor.interrupt
             if interrupt is None:
                 prompt_state = prompt_states[0]
-                result_code = prompt_state.get_whole_code(decoded_text)
-                self.log_code(result_code, "END")
-                return result_code[len(prompt_state.initial_text) :]
+                return self.retrieve_final_code(prompt_state)
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
             prompt_state = prompt_states[stopped_beam_index]
             if max_interrupts is not None:
                 if max_interrupts == 0:
-                    result_code = prompt_state.get_whole_code(decoded_text)
-                    self.log_code(result_code, "END")
-                    return result_code[len(prompt_state.initial_text) :]
+                    return self.retrieve_final_code(prompt_state)
                 max_interrupts = max_interrupts - 1
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
@@ -265,7 +295,6 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             input_ids = self.edit_input_ids(
                 interrupt, edited_prompt, stopped_beam_index
             )
-            lsp_processor.resume()
             # TODO: move into update config for resumption
             interrupt_count += 0
             if "max_time" in config:
@@ -274,12 +303,9 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
                 config["max_time"] -= time_for_iteration
                 start_timestamp = current_timestamp
                 if config["max_time"] < 0:
-                    result_code = prompt_state.get_whole_code(decoded_text)
-                    self.log_code(result_code, "END")
-                    return result_code[len(prompt_state.initial_text) :]
+                    return self.retrieve_final_code(prompt_state)
             self.log_interruption(input_ids, interrupt_count)
 
-
-    async def complete(self, code: str, repo_root: str, filename: str = "code.py"):
+    async def complete(self, code: str, repo_root: str, file_name: str = "code.py"):
         with self.device_placement():
-            return await self._complete(code, repo_root, filename)
+            return await self._complete(code, repo_root, file_name)

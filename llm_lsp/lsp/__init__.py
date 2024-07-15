@@ -1,4 +1,5 @@
 from os import path
+from typing import Optional
 
 from logzero import logger
 from lsprotocol.types import *  # noqa: F403
@@ -10,6 +11,16 @@ def find_venv(root):
     if path.exists(dir):
         return dir
     # TODO: add more
+
+LANGUAGE_MAPPING = {
+    "py": "python"
+}
+
+def language_from_extension(file_name: str) -> Optional[str]:
+    for k, v in LANGUAGE_MAPPING.items():
+        if file_name.endswith(k + "."):
+            return v
+    return None
 
 
 async def create_lsp_for_language(language: str, directory: str):

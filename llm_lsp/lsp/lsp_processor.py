@@ -67,7 +67,7 @@ class LspLogitsProcessor(LogitsProcessor):
         tokenizer,
         lsp_clients,
         prompt_states,
-        filenames,
+        file_names,
         interrupt_token_id,
         expand_size,
         beam_tracker,
@@ -76,7 +76,7 @@ class LspLogitsProcessor(LogitsProcessor):
         self.tokenizer: PreTrainedTokenizer = tokenizer
         self.lsp_clients: BaseLanguageClient = lsp_clients
         self.prompt_states = prompt_states
-        self.filenames = filenames
+        self.file_names = file_names
         self.signature_cache = {}
         self.expand_size = expand_size
         self.interrupt_token_id = interrupt_token_id
@@ -384,9 +384,9 @@ class LspLogitsProcessor(LogitsProcessor):
                 continue
             self.signature_cache[keyword] = relevant_completions[0]
 
-    def filename(self, i):
-        if self.filenames[i // self.expand_size] is not None:
-            return self.filenames[i // self.expand_size]
+    def file_name(self, i):
+        if self.file_names[i // self.expand_size] is not None:
+            return self.file_names[i // self.expand_size]
         else:
             return "__generate__.py"
 
@@ -395,9 +395,9 @@ class LspLogitsProcessor(LogitsProcessor):
     ) -> FloatTensor:
         """Returns a 1d FloatTensor for a single batch"""
         current_code = self.current_code(i, input_ids)
-        filename = self.filename(i)
+        file_name = self.file_name(i)
         with LspCodeFile(
-            filename, current_code, self.lsp_clients[i // self.expand_size]
+            file_name, current_code, self.lsp_clients[i // self.expand_size]
         ) as lsp_code_file:
             if self.should_complete(current_code):
                 completions = lsp_code_file.ask_completions()
