@@ -9,6 +9,10 @@ class CodeUtil(ABC):
         pass
 
     @abstractproperty
+    def dereference_operator(self) -> str:
+        pass
+
+    @abstractproperty
     def indentation_regex(self) -> re.Pattern:
         pass
 

@@ -87,7 +87,6 @@ async def main(args):
     hl = highlight_code(code)
     logger.info("Code:\n##########\n" + hl + "\n##########")
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="Pseudo code meta strategy",

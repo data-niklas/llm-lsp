@@ -62,14 +62,19 @@ class LspCodeFile:
 
     def resolve_completions(self, completions):
         if len(completions) > 0:
-            resolved_completions = asyncio.get_event_loop().run_until_complete(
-                asyncio.gather(
-                    *[
-                        self.lsp_client.completion_item_resolve_async(completion)
-                        for completion in completions
-                    ]
-                )
-            )
+            resolved_completions = []
+            for completion in completions:
+                resolved_completion = asyncio.get_event_loop().run_until_complete(self.lsp_client.completion_item_resolve_async(completion))
+                resolved_completions.append(resolved_completion)
+                #sleep(0.1)
+            # resolved_completions = asyncio.get_event_loop().run_until_complete(
+            #     asyncio.gather(
+            #         *[
+            #             self.lsp_client.completion_item_resolve_async(completion)
+            #             for completion in completions
+            #         ]
+            #     )
+            # )
         else:
             resolved_completions = []
         return resolved_completions

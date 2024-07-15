@@ -12,8 +12,6 @@ from transformers import LogitsProcessor
 from llm_lsp.config import LspGenerationConfig
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
-# TODO: add special token
-# TODO: use special token as interrupt to provide more information to pipeline
 from llm_lsp.interrupts.deprecation import (DEPRECATION_COMMENT_TYPE,
                                             is_deprecated)
 from llm_lsp.interrupts.signature import SIGNATURE_COMMENT_TYPE

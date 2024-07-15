@@ -12,6 +12,10 @@ class PythonCodeUtil(CodeUtil):
         return "py"
 
     @property
+    def dereference_operator(self) -> str:
+        return "."
+
+    @property
     def indentation_regex(self) -> re.Pattern:
         return r"\s*"
 

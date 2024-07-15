@@ -3,7 +3,7 @@ MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 # MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 # MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 # MODEL = "google/codegemma-7b-it"
-# MODEL = "microsoft/Phi-3-mini-4k-instruct"
+#MODEL = "microsoft/Phi-3-mini-4k-instruct"
 
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
