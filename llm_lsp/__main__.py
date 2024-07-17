@@ -67,6 +67,7 @@ async def main(args):
     config = LspGenerationConfig(
         chat_history_log_file=args.chat_history_log_file,
         masked_gen=True,
+        enabled=False
     )
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,

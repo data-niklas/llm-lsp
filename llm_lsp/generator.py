@@ -213,8 +213,10 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             config["max_interrupts"] if "max_interrupts" in config else None
         )
         beam_size = config["num_beams"] if "num_beams" in config else 1
+        return config, max_interrupts, beam_size
 
-    def initialize_generation_state(self, code: str, repo_root: str, file_name: str):
+    async def initialize_generation_state(self, code: str, repo_root: str, file_name: str):
+        config, max_interrupts, beam_size = self.initialize_generation_config()
         batch_size = 1
         boundary_logits_processor = self.create_boundary_logits_processor()
         comments_logits_processor = self.create_comments_logits_processor()
@@ -233,6 +235,9 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             [lsp], prompt_states, [file_name], beam_size
         )
         return (
+            config,
+            max_interrupts,
+            beam_size,
             batch_size,
             boundary_logits_processor,
             comments_logits_processor,
@@ -251,21 +256,24 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         interrupt_count = 0
         # TODO: allow higher batch size
         (
+            config,
+            max_interrupts,
+            beam_size,
             batch_size,
             boundary_logits_processor,
             comments_logits_processor,
             lsp_processor,
             prompt_states,
             code_utils,
-        ) = self.initialize_generation_state(code, repo_root, file_name)
+        ) = await self.initialize_generation_state(code, repo_root, file_name)
 
-        config = self.fix_config(config, prompt)
 
         start_timestamp = time.time()
         prompt = prompt_states[0].format(code)
         input_ids = self.tokenizer(
             prompt, return_tensors="pt", add_special_tokens=False
         ).input_ids
+        config = self.fix_config(config, prompt)
         input_ids, _ = self.expand_input_ids(input_ids, config)
         while True:
             decoded_text = self.resume_generation(
@@ -281,12 +289,12 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             interrupt = lsp_processor.interrupt
             if interrupt is None:
                 prompt_state = prompt_states[0]
-                return self.retrieve_final_code(prompt_state)
+                return self.retrieve_final_code(prompt_state, decoded_text)
             stopped_beam_index = self.index_of_beam_to_edit(interrupt.input_ids)
             prompt_state = prompt_states[stopped_beam_index]
             if max_interrupts is not None:
                 if max_interrupts == 0:
-                    return self.retrieve_final_code(prompt_state)
+                    return self.retrieve_final_code(prompt_state, decoded_text)
                 max_interrupts = max_interrupts - 1
             code_util = code_utils[stopped_beam_index]
             edited_prompt = self.edit_generation_text_for_completion(
@@ -303,7 +311,7 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
                 config["max_time"] -= time_for_iteration
                 start_timestamp = current_timestamp
                 if config["max_time"] < 0:
-                    return self.retrieve_final_code(prompt_state)
+                    return self.retrieve_final_code(prompt_state, decoded_text)
             self.log_interruption(input_ids, interrupt_count)
 
     async def complete(self, code: str, repo_root: str, file_name: str = "code.py"):

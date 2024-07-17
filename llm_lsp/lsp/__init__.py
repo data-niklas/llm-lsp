@@ -18,7 +18,7 @@ LANGUAGE_MAPPING = {
 
 def language_from_extension(file_name: str) -> Optional[str]:
     for k, v in LANGUAGE_MAPPING.items():
-        if file_name.endswith(k + "."):
+        if file_name.endswith("." + k):
             return v
     return None
 
