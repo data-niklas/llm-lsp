@@ -104,9 +104,12 @@ class LspLogitsProcessor(LogitsProcessor):
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
 
+    def is_builtin_completion(self, completion):
+        return completion.detail == "builtins"
+
     def filter_builtin_completions(self, completions):
         return [
-            completion for completion in completions if completion.detail != "builtins"
+            completion for completion in completions if not self.is_builtin_completion(completion)
         ]
 
     def filter_signatures_without_parameters(self, completions):
@@ -353,20 +356,12 @@ class LspLogitsProcessor(LogitsProcessor):
         return signature.label.split("(")[0].split("=")[0]
 
     def increase_signature_cache(self, signature_help: SignatureHelp, completions):
-        signatures = signature_help.signatures
-        for signature in signatures:
-            # TODO: replace string splitting with parsing per language
-            keyword = self.get_signature_keyword(signature)
-            if keyword in self.signature_cache:
+        for completion in completions:
+            if not self.is_builtin_completion(completion):
                 continue
-            relevant_completions = [
-                completion
-                for completion in completions
-                if self.completion_text(completion) == keyword
-            ]
-            if len(relevant_completions) == 0:
-                continue
-            self.signature_cache[keyword] = relevant_completions[0]
+            keyword = self.completion_text(completion)
+            if keyword not in self.signature_cache:
+                self.signature_cache[keyword] = completion
 
     def get_file_name_for_batch(self, i):
         if self.file_names[i // self.expand_size] is not None:
