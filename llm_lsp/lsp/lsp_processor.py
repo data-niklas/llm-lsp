@@ -12,8 +12,7 @@ from transformers import LogitsProcessor
 from llm_lsp.config import LspGenerationConfig
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
-from llm_lsp.interrupts.deprecation import (DEPRECATION_COMMENT_TYPE,
-                                            is_deprecated)
+from llm_lsp.interrupts.deprecation import DEPRECATION_COMMENT_TYPE, is_deprecated
 from llm_lsp.interrupts.signature import SIGNATURE_COMMENT_TYPE
 from llm_lsp.lsp.file import LspCodeFile
 
@@ -105,21 +104,6 @@ class LspLogitsProcessor(LogitsProcessor):
     def completion_text(self, completion) -> str:
         return completion.insert_text or completion.label
 
-    def filter_completions_by_kind(self, completions):
-        return [
-            completion
-            for completion in completions
-            if completion.kind
-            in [
-                CompletionItemKind.Method,
-                CompletionItemKind.Field,
-                CompletionItemKind.Class,
-                CompletionItemKind.Function,
-                CompletionItemKind.Property,
-                CompletionItemKind.Variable,
-            ]
-        ]
-
     def filter_builtin_completions(self, completions):
         return [
             completion for completion in completions if completion.detail != "builtins"
@@ -202,15 +186,15 @@ class LspLogitsProcessor(LogitsProcessor):
             scores[token] = min(minimum - RANK_DELTA, scores[token].item())
         return scores
 
-    def mask_other_tokens(
-        self, scores, non_deprecated
-    ):
+    def mask_other_tokens(self, scores, non_deprecated):
         if len(non_deprecated) == 0:
             return scores
         return torch.where(
-            torch.tensor([True if i in non_deprecated else False for i in range(scores.shape[0])]),
+            torch.tensor(
+                [True if i in non_deprecated else False for i in range(scores.shape[0])]
+            ),
             scores,
-            float("-inf") * torch.ones(scores.shape[0])
+            float("-inf") * torch.ones(scores.shape[0]),
         )
 
     def apply_constant_adjustments(
@@ -384,7 +368,7 @@ class LspLogitsProcessor(LogitsProcessor):
                 continue
             self.signature_cache[keyword] = relevant_completions[0]
 
-    def file_name(self, i):
+    def get_file_name_for_batch(self, i):
         if self.file_names[i // self.expand_size] is not None:
             return self.file_names[i // self.expand_size]
         else:
@@ -395,7 +379,7 @@ class LspLogitsProcessor(LogitsProcessor):
     ) -> FloatTensor:
         """Returns a 1d FloatTensor for a single batch"""
         current_code = self.current_code(i, input_ids)
-        file_name = self.file_name(i)
+        file_name = self.get_file_name_for_batch(i)
         with LspCodeFile(
             file_name, current_code, self.lsp_clients[i // self.expand_size]
         ) as lsp_code_file:
@@ -415,10 +399,7 @@ class LspLogitsProcessor(LogitsProcessor):
                     self.filter_completions_by_postfix(
                         trigger_phrase,
                         self.filter_completions_by_case(
-                            trigger_phrase,
-                            self.filter_completions_by_kind(
-                                self.filter_builtin_completions(completions)
-                            ),
+                            trigger_phrase, self.filter_builtin_completions(completions)
                         ),
                     )
                 ),
@@ -433,28 +414,45 @@ class LspLogitsProcessor(LogitsProcessor):
             deprecated_completions = self.filter_completions_by_next_token(
                 deprecated_completions, scores
             )
-            if not self.check_completion_documentation_included(
-                i, trigger_phrase, current_code, non_deprecated_completions
+            if (
+                self.config.use_completion_context
+                and not self.check_completion_documentation_included(
+                    i, trigger_phrase, current_code, non_deprecated_completions
+                )
             ):
-                if len(non_deprecated_completions) != 1 and (
-                    not non_deprecated_completions[0].insert_text.startswith(
-                        trigger_phrase
-                    )
-                    or trigger_phrase == ""
-                ):
+
+                if self.config.predict_correct_completion_symbol:
+
+                    if len(non_deprecated_completions) != 1 and (
+                        not non_deprecated_completions[0].insert_text.startswith(
+                            trigger_phrase
+                        )
+                        or trigger_phrase == ""
+                    ):
+                        self.trigger_interrupt(
+                            {
+                                "completion": non_deprecated_completions,
+                                "deprecation": deprecated_completions,
+                            },
+                            COMPLETION_COMMENT_TYPE,
+                        )
+                else:
                     self.trigger_interrupt(
-                        {
-                            "completion": non_deprecated_completions,
-                            "deprecation": deprecated_completions,
-                        },
+                        {"completion": non_deprecated_completions},
                         COMPLETION_COMMENT_TYPE,
                     )
-            if not self.check_deprecation_documentation_included(
-                i, trigger_phrase, current_code, deprecated_completions
+            if (
+                self.config.use_deprecation_context
+                and not self.check_deprecation_documentation_included(
+                    i, trigger_phrase, current_code, deprecated_completions
+                )
             ):
                 self.trigger_interrupt(deprecated_completions, DEPRECATION_COMMENT_TYPE)
-            if not self.check_signature_documentation_included(
-                i, trigger_phrase, current_code, signature_help
+            if (
+                self.config.use_signature_context
+                and not self.check_signature_documentation_included(
+                    i, trigger_phrase, current_code, signature_help
+                )
             ):
                 self.trigger_interrupt(signature_help, SIGNATURE_COMMENT_TYPE)
             # get completion text for each completion, which may add characters such as ( to functions and , to variables
@@ -495,10 +493,7 @@ class LspLogitsProcessor(LogitsProcessor):
                 deprecated_first_tokens,
             )
             if self.config.masked_gen:
-                scores = self.mask_other_tokens(
-                    scores,
-                    non_deprecated_first_tokens
-                )
+                scores = self.mask_other_tokens(scores, non_deprecated_first_tokens)
         return scores
 
     def __call__(self, input_ids: LongTensor, scores: FloatTensor) -> FloatTensor:

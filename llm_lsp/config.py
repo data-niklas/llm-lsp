@@ -10,6 +10,9 @@ class LspGenerationConfig:
     predict_correct_completion_symbol: bool = True
     force_custom_pad: bool = False
     masked_gen: bool = True
+    use_completion_context: bool = True
+    use_deprecation_context: bool = True
+    use_signature_context: bool = True
     enabled: bool = (
         True  # quick setting to disable all processors, overrides other settings
     )

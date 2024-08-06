@@ -80,12 +80,13 @@ class PromptState:
 
     def get_generated_code(self, text: str):
         # Remove trailing " " after special tokens in some tokenizers to actually make encoding tokens reversible
+        whole_code = self.get_whole_code(text)
+        return whole_code[len(self.code_prefix) :]
+
+    def get_whole_code(self, text):
+        # Remove trailing " " after special tokens in some tokenizers to actually make encoding tokens reversible
         for naughty_token in self.get_naughty_tokens():
             text = text.replace(naughty_token + " ", naughty_token)
         generated_text = text[len(self.initial_prompt) :]
         generated_code = self.extract_from_markdown_code_block(generated_text)
-        return generated_code[len(self.code_prefix) :]
-
-    def get_whole_code(self, text):
-        generated_code = self.get_generated_code(text)
-        return self.code_prefix + generated_code
+        return generated_code

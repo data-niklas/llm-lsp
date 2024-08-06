@@ -4,7 +4,7 @@ from copy import deepcopy
 # from llm_lsp.lsp_client import LspClient
 from typing import Any, Dict, List
 
-from transformers import AutoTokenizer, GenerationMixin
+from transformers import AutoTokenizer, GenerationMixin, LogitsProcessorList
 
 from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.config import LspGenerationConfig
@@ -153,7 +153,7 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         generated_result = self.resume(
             input_ids,
             batch_size,
-            logits_processor=logits_processors,
+            logits_processor=LogitsProcessorList(logits_processors),
             stopping_criteria=[stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
