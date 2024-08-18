@@ -8,14 +8,15 @@ datasets
 # Debug
 pygments
 logzero
+protobuf
 
 # lsp stuff
 python-lsp-server
 
 nest_asyncio
-
+lsprotocol==2023.0.1
 # python client for lsp
-pygls @ git+https://github.com/openlawlibrary/pygls.git
+pygls @ git+https://github.com/openlawlibrary/pygls.git@0d51815255369f2ba1b28def4f3981f2f5a8bced
 
 marisa_trie
 

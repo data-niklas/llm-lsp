@@ -1,3 +1,4 @@
+import os
 from os import path
 from typing import Optional
 
@@ -29,6 +30,9 @@ async def create_lsp_for_language(language: str, directory: str):
 
 
 async def create_python_lsp(directory):
+    venv_directory = path.abspath(find_venv(directory))
+    if os.environ["VIRTUAL_ENV"] is None:
+        os.environ["VIRTUAL_ENV"] = venv_directory
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
     await lsp.start_io("pylsp")
     logger.info("Now initializing")
@@ -92,18 +96,15 @@ async def create_python_lsp(directory):
         )
     )
     # logger.debug(initialize_result)
-
     lsp.initialized(InitializedParams())
     logger.info(
         "Using python: "
-        + path.abspath(path.join(find_venv(directory), "bin", "python"))
+        + venv_directory
     )
     lsp.workspace_did_change_configuration(
         DidChangeConfigurationParams(
             settings={
-                "pylsp.plugins.jedi.environment": path.abspath(
-                    path.join(find_venv(directory), "bin", "python")
-                ),
+                "pylsp.plugins.jedi.environment": venv_directory,
                 "pylsp.plugins.jedi_completion.include_class_objects": True,
                 "pylsp.plugins.jedi_completion.include_function_objects": True,
                 "pylsp.plugins.rope_completion.enabled": True,

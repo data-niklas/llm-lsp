@@ -8,6 +8,6 @@ setup(
     version='1.0.0',
     author='Niklas Loeser',
     description='Description of my package',
-    packages=["llm_lsp"],    
+    packages=find_packages(),    
     install_requires=requirements,
 )
