@@ -3,53 +3,37 @@ import json
 import sys
 from functools import lru_cache
 from typing import Any, List, Optional
+import subprocess
+from os import environ, path
 
 from llm_lsp.interrupts import InterruptType
 from llm_lsp.prompt_state import Comment
 
-
-def module_name_and_variable_parts(item):
-    parts: List[str] = item.split(".")
-    module_name_parts = []
-    variable_parts = []
-    for i, part in enumerate(parts):
-        if part.islower():
-            module_name_parts.append(part)
-        else:
-            variable_parts.extend(parts[i:])
-            break
-    module_name = ".".join(module_name_parts)
-    return module_name, variable_parts
+VENV_LSP_FEATURES = path.join(path.dirname(__file__), "venv_lsp_features.py")
 
 
+@lru_cache
 def get_deprecation_message(item):
-    module_name, variable_parts = module_name_and_variable_parts(item)
-    variable_parts.append("__deprecated__")
-    module = importlib.import_module(module_name)
-    variable = module
-    for variable_part in variable_parts:
-        if not hasattr(variable, variable_part):
-            return None
-        variable = getattr(variable, variable_part)
-    return variable
+    venv_dir = environ["VIRTUAL_ENV"]
+    environ["TOKENIZERS_PARALLELISM"] = "true"
+    python = path.join(venv_dir, "bin", "python")
+    cmd = [python, VENV_LSP_FEATURES, "get_deprecation_message", item]
+    handle = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    #output = subprocess.check_output(cmd)
+    output, _ = handle.communicate()
+    return json.loads(output)
 
 
 @lru_cache
 def is_deprecated(item):
-    module_name, variable_parts = module_name_and_variable_parts(item)
-    try:
-        module = importlib.import_module(module_name)
-    except ModuleNotFoundError:
-        return False
-    except ValueError:
-        # empty module name
-        return False
-    variable = module
-    for variable_part in variable_parts:
-        if not hasattr(variable, variable_part):
-            return False
-        variable = getattr(variable, variable_part)
-    return hasattr(variable, "__deprecated__")
+    venv_dir = environ["VIRTUAL_ENV"]
+    environ["TOKENIZERS_PARALLELISM"] = "true"
+    python = path.join(venv_dir, "bin", "python")
+    cmd = [python, VENV_LSP_FEATURES, "is_deprecated", item]
+    handle = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    #output = subprocess.check_output(cmd)
+    output, _ = handle.communicate()
+    return json.loads(output)
 
 
 DEPRECATION_COMMENT_TYPE = "deprecation"

@@ -267,7 +267,6 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             code_utils,
         ) = await self.initialize_generation_state(code, repo_root, file_name)
 
-
         start_timestamp = time.time()
         prompt = prompt_states[0].format(code)
         input_ids = self.tokenizer(

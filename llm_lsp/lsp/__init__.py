@@ -8,6 +8,8 @@ from pygls.lsp.client import BaseLanguageClient
 
 
 def find_venv(root):
+    if os.environ["VIRTUAL_ENV"] is not None:
+        return os.environ["VIRTUAL_ENV"]
     dir = path.join(root, "venv")
     if path.exists(dir):
         return dir
@@ -33,6 +35,8 @@ async def create_python_lsp(directory):
     venv_directory = path.abspath(find_venv(directory))
     if os.environ["VIRTUAL_ENV"] is None:
         os.environ["VIRTUAL_ENV"] = venv_directory
+    else:
+        venv_directory = os.environ["VIRTUAL_ENV"]
     lsp: BaseLanguageClient = BaseLanguageClient("pylsp", "1.0.0")
     await lsp.start_io("pylsp")
     logger.info("Now initializing")
