@@ -20,6 +20,21 @@ class InterruptStoppingCriteria(StoppingCriteria):
                 return True
         return False
 
+class CodeBlockEndStoppingCriteria(StoppingCriteria):
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.n = 10
+
+    def ends_in_code_block(self, sequence) -> bool:
+        last_n_elements = sequence[-self.n:]
+        last_text = self.tokenizer.decode(last_n_elements)
+        return "\n```" in last_text
+
+    def __call__(self, input_ids, scores, **kwargs):
+        if len(input_ids.shape) == 1:
+            return self.ends_in_code_block(input_ids)
+        return all([self.ends_in_code_block(sequence) for sequence in input_ids])
+
 
 @dataclass
 class Interrupt:

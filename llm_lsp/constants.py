@@ -1,5 +1,6 @@
 MODEL = "codellama/CodeLlama-7b-Instruct-hf"
-MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
+#MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
+#MODEL = "beowolx/MistralHermes-CodePro-7B-v1"
 # MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 # MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 # MODEL = "google/codegemma-7b-it"

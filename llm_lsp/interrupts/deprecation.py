@@ -33,7 +33,12 @@ def is_deprecated(item):
     handle = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
     #output = subprocess.check_output(cmd)
     output, _ = handle.communicate()
-    return json.loads(output)
+    try:
+        return json.loads(output)
+    except json.decoder.JSONDecodeError as e:
+        print(item)
+        print(output)
+        raise e
 
 
 DEPRECATION_COMMENT_TYPE = "deprecation"

@@ -10,7 +10,7 @@ from llm_lsp.code_utils.python import PythonCodeUtil
 from llm_lsp.config import LspGenerationConfig
 from llm_lsp.constants import INTERRUPT_TOKEN, PAD_TOKEN
 from llm_lsp.generation_utils.beam_tracking import BeamTracker
-from llm_lsp.interrupts import InterruptStoppingCriteria, InterruptType
+from llm_lsp.interrupts import InterruptStoppingCriteria, InterruptType, CodeBlockEndStoppingCriteria
 from llm_lsp.interrupts.completion import CompletionInterrupt
 from llm_lsp.interrupts.deprecation import DeprecationInterrupt
 from llm_lsp.interrupts.signature import SignatureInterrupt
@@ -133,7 +133,8 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
         """
         Returns the decoded text for each batch. If using beam search this is the decoded text of the best beam. In addition this method will return the index of the best beam. This is necessary to access the appropriate comment tool.
         """
-        stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
+        interrupt_stopping_criterium = InterruptStoppingCriteria(self.interrupt_token_id())
+        code_block_stopping_criterium = CodeBlockEndStoppingCriteria(self.tokenizer)
         lsp_processor.resume()
         logits_processors = [lsp_processor]
         if self.config.boundary_processor:
@@ -154,7 +155,7 @@ class Generator(InterruptMixin, PipelineMixin, TokenSequenceEditMixin, LogMixin)
             input_ids,
             batch_size,
             logits_processor=LogitsProcessorList(logits_processors),
-            stopping_criteria=[stopping_criterium],
+            stopping_criteria=[interrupt_stopping_criterium, code_block_stopping_criterium],
             return_dict_in_generate=True,
             output_scores=True,
             beam_tracker=self.beam_tracker,

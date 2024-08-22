@@ -4,7 +4,7 @@ from typing import Optional
 @dataclass
 class LspGenerationConfig:
     comments_processor: bool = True
-    boundary_processor: bool = True
+    boundary_processor: bool = False
     lsp_processor: bool = True
     chat_history_log_file: Optional[str] = None
     predict_correct_completion_symbol: bool = True

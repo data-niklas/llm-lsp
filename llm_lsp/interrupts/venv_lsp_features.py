@@ -45,6 +45,8 @@ def is_deprecated(item):
     except ValueError:
         # empty module name
         return False
+    except ImportError:
+        return False
     variable = module
     for variable_part in variable_parts:
         if not hasattr(variable, variable_part):
