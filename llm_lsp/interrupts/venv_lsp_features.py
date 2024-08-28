@@ -54,11 +54,17 @@ def is_deprecated(item):
         variable = getattr(variable, variable_part)
     return hasattr(variable, "__deprecated__")
 
+def are_deprecated(items):
+    return [is_deprecated(item) for item in items]
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     item = sys.argv[2]
     if cmd == "is_deprecated":
         result = is_deprecated(item)
+    elif cmd == "are_deprecated":
+        items = json.loads(item)
+        result = are_deprecated(items)
     elif cmd == "get_deprecation_message":
         result = get_deprecation_message(item)
     else:

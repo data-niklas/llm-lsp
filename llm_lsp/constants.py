@@ -1,6 +1,6 @@
 MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 #MODEL = "ise-uiuc/Magicoder-S-DS-6.7B"
-#MODEL = "beowolx/MistralHermes-CodePro-7B-v1"
+MODEL = "beowolx/MistralHermes-CodePro-7B-v1"
 # MODEL = "m-a-p/OpenCodeInterpreter-DS-6.7B"
 # MODEL = "deepseek-ai/deepseek-coder-33b-instruct"
 # MODEL = "google/codegemma-7b-it"
@@ -9,7 +9,7 @@ MODEL = "codellama/CodeLlama-7b-Instruct-hf"
 # . Do not generate more code than necessary. Do not generate comments with further tasks.
 GLOBAL_CONFIGURATION = {
     # "num_beam_groups": 0,
-    "num_beams": 3,
+    "num_beams": 2,
     # "diversity_penalty": 1.0,
     "do_sample": True,
     "top_k": 50,

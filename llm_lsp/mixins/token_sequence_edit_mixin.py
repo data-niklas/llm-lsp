@@ -7,6 +7,7 @@ from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
 from llm_lsp.interrupts.deprecation import DEPRECATION_COMMENT_TYPE
 from llm_lsp.mixins.padding_mixin import PaddingMixin
 from llm_lsp.prompt_formatters import PromptFormatter
+from llm_lsp.interrupts import CompletionSymbolBlockEndStoppingCriteria
 
 
 class TokenSequenceEditMixin(PaddingMixin):
@@ -76,7 +77,7 @@ class TokenSequenceEditMixin(PaddingMixin):
         self.log_code(prompt, "PREDICT CORRECT COMPLETION SYMBOL START")
         input_ids = self.tokenizer(prompt, return_tensors="pt")["input_ids"]
         generation_result = self.model.generate(
-            input_ids, use_cache=True, **self.generation_config
+            input_ids, use_cache=True, stopping_criteria=[CompletionSymbolBlockEndStoppingCriteria(self.tokenizer)], **self.generation_config
         )
         generation_text = self.tokenizer.decode(
             generation_result[0][len(input_ids[0]) :], skip_special_tokens=True

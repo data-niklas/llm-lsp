@@ -12,7 +12,7 @@ from transformers import LogitsProcessor
 from llm_lsp.config import LspGenerationConfig
 from llm_lsp.interrupts import Interrupt
 from llm_lsp.interrupts.completion import COMPLETION_COMMENT_TYPE
-from llm_lsp.interrupts.deprecation import DEPRECATION_COMMENT_TYPE, is_deprecated
+from llm_lsp.interrupts.deprecation import DEPRECATION_COMMENT_TYPE, is_deprecated, are_deprecated
 from llm_lsp.interrupts.signature import SIGNATURE_COMMENT_TYPE
 from llm_lsp.lsp.file import LspCodeFile
 
@@ -142,11 +142,16 @@ class LspLogitsProcessor(LogitsProcessor):
     def is_deprecated(self, completion) -> bool:
         return is_deprecated(completion.detail + "." + completion.insert_text)
 
+    def are_deprecated(self, completions) -> bool:
+        return are_deprecated([completion.detail + "." + completion.insert_text for completion in completions])
+
     def split_deprecated_completions(self, completions):
         non_deprecated = []
         deprecated = []
-        for completion in completions:
-            if self.is_deprecated(completion):
+        if len(completions) == 0:
+            return non_deprecated, deprecated
+        for completion, is_completion_deprecated in zip(completions, self.are_deprecated(completions)):
+            if is_completion_deprecated:
                 deprecated.append(completion)
             else:
                 non_deprecated.append(completion)

@@ -23,9 +23,11 @@ def get_deprecation_message(item):
     output, _ = handle.communicate()
     return json.loads(output)
 
+deprecation_cache = {}
 
-@lru_cache
 def is_deprecated(item):
+    if item in deprecation_cache:
+        return deprecation_cache[item]
     venv_dir = environ["VIRTUAL_ENV"]
     environ["TOKENIZERS_PARALLELISM"] = "true"
     python = path.join(venv_dir, "bin", "python")
@@ -34,12 +36,46 @@ def is_deprecated(item):
     #output = subprocess.check_output(cmd)
     output, _ = handle.communicate()
     try:
-        return json.loads(output)
+        result = json.loads(output)
+        deprecation_cache[item] = result
+        return result
     except json.decoder.JSONDecodeError as e:
         print(item)
         print(output)
         raise e
 
+def are_deprecated(items):
+    results = [None] * len(items)
+    to_be_checked = []
+    for i, item in enumerate(items):
+        if item in deprecation_cache:
+            results[i] = deprecation_cache[item]
+        else:
+            to_be_checked.append(item)
+    if len(to_be_checked) == 0:
+        return results
+    venv_dir = environ["VIRTUAL_ENV"]
+    environ["TOKENIZERS_PARALLELISM"] = "true"
+    python = path.join(venv_dir, "bin", "python")
+    cmd = [python, VENV_LSP_FEATURES, "are_deprecated", json.dumps(to_be_checked)]
+    handle = subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True)
+    #output = subprocess.check_output(cmd)
+    output, _ = handle.communicate()
+    try:
+        checked_results = json.loads(output)
+        start_check_index = 0
+        for checked_result, item in  zip(checked_results, to_be_checked):
+            deprecation_cache[item] = checked_result
+            for i in range(start_check_index, len(results)):
+                if results[i] == None:
+                    results[i] = checked_result
+                    start_check_index = i + 1
+                    break
+        return results
+    except json.decoder.JSONDecodeError as e:
+        print(item)
+        print(output)
+        raise e
 
 DEPRECATION_COMMENT_TYPE = "deprecation"
 

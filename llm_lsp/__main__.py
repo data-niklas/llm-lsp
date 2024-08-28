@@ -66,9 +66,9 @@ async def main(args):
     #    return
     config = LspGenerationConfig(
         chat_history_log_file=args.chat_history_log_file,
-        use_completion_context=False,
+        use_completion_context=True,
         masked_gen=False,
-        predict_correct_completion_symbol=False
+        predict_correct_completion_symbol=True
     )
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,
@@ -95,7 +95,7 @@ def parse_args():
         description="Stuff",
         epilog="Text at the bottom of help",
     )
-    parser.add_argument("-f", "--file", default="tests/pydantic_1.py")
+    parser.add_argument("-f", "--file", default="tests/bidict_2.py")
     parser.add_argument("-d", "--directory", default=".")
     parser.add_argument("-l", "--level", default="DEBUG")
     parser.add_argument("-v", "--chat_history_log_file", default=None)
