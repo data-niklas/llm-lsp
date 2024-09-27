@@ -5,6 +5,7 @@ It uses static analysis provided by a language server to provide exact informati
 
 ## Requirements
 When using `llm_lsp` to complete code files per CLI, it will require a single Nvidia GPU (1 CUDA device) with enough VRAM to load the model.
+On multi-gpu infrastructure, restricting the available GPUs by setting the `CUDA_VISIBLE_DEVICES` environment variable may be desired.
 
 ## Installation
 The code exposes the Python package `llm_lsp`, which can be installed as any other Python package:
@@ -15,7 +16,7 @@ cd llm_lsp
 # alternatively use conda
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -e . # use -e to be able to modify files and use the package as usual
 ```
 
 Then run `llm_lsp/__main__.py` with the necessary arguments, to complete a given code file:
