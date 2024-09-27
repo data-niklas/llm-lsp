@@ -3,6 +3,9 @@ Enhance neural code completion using static analysis!
 This repository enhances the code completion of instruction based LLMs running on the Transformers runtime.
 It uses static analysis provided by a language server to provide exact information on dependencies, such as function signatures, code completions and deprecated items.
 
+## Requirements
+When using `llm_lsp` to complete code files per CLI, it will require a single Nvidia GPU (1 CUDA device) with enough VRAM to load the model.
+
 ## Installation
 The code exposes the Python package `llm_lsp`, which can be installed as any other Python package:
 ```sh
@@ -19,6 +22,7 @@ Then run `llm_lsp/__main__.py` with the necessary arguments, to complete a given
 ```sh
 python llm_lsp -f path/to/code
 ```
+`llm_lsp` will try to automatically find a virtual environment in the directory of the code file to be completed. It will find the directory `venv`. To set a custom virtual environment, set the `VIRTUAL_ENV` environment, which points to the venv.
 For further testing, the configuration values in `llm_lsp/constants.py` and `llm_lsp/__main__.py` -> `LspGenerationConfig` can be changed.
 
 For serious use it is recommended to use the package as a library programmatically:

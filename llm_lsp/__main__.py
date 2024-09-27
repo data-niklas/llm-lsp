@@ -66,9 +66,9 @@ async def main(args):
     #    return
     config = LspGenerationConfig(
         chat_history_log_file=args.chat_history_log_file,
-        use_completion_context=True,
+        use_completion_context=False,
         masked_gen=False,
-        predict_correct_completion_symbol=True
+        predict_correct_completion_symbol=False
     )
     model = AutoModelForCausalLM.from_pretrained(
         MODEL,
